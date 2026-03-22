@@ -206,6 +206,7 @@ void ui_Screen1_screen_init(void) {
     ui_LabelPuls = lv_label_create(puls_val_row);
     lv_label_set_text(ui_LabelPuls, "--");
     lv_obj_set_style_text_font(ui_LabelPuls, &lv_font_montserrat_32, 0); // Large value
+    lv_obj_set_style_text_color(ui_LabelPuls, lv_color_hex(0xFFFFFF), 0);
     
     lv_obj_t *bpm_lbl = lv_label_create(puls_val_row);
     lv_label_set_text(bpm_lbl, "BPM");
@@ -254,6 +255,7 @@ void ui_Screen1_screen_init(void) {
     ui_LabelSpo = lv_label_create(spo_val_row);
     lv_label_set_text(ui_LabelSpo, "--");
     lv_obj_set_style_text_font(ui_LabelSpo, &lv_font_montserrat_32, 0); // Large value
+    lv_obj_set_style_text_color(ui_LabelSpo, lv_color_hex(0xFFFFFF), 0);
 
     lv_obj_t *pct_lbl = lv_label_create(spo_val_row);
     lv_label_set_text(pct_lbl, "%");

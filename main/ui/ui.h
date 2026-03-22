@@ -15,6 +15,7 @@ extern "C" {
 #include "screens/ui_Screen3.h"
 #include "screens/ui_Screen4.h"
 #include "screens/ui_Screen5.h"
+#include "screens/ui_Screen6.h"
 
 // GLOBAL VARIABLES
 extern lv_obj_t *ui_LabelTime;
@@ -34,6 +35,7 @@ extern lv_obj_t *ui_LabelGX;
 extern lv_obj_t *ui_LabelGY;
 extern lv_obj_t *ui_LabelGZ;
 extern lv_obj_t *ui_LabelGSM; // GSM Label for Screen 2
+extern lv_obj_t *ui_Screen6; // WiFi Settings Screen
 
 // UI INIT
 void ui_init(void);

@@ -22,7 +22,6 @@
 #include "SensorQMI8658.hpp" // Ensure this path is correct
 #include "ble_spp_server.h"
 #include "max30102.h"
-#include "max30102.h"
 #include "algorithm.h"
 #include "lc76g.h"
 #include "fft_algo.h"
@@ -192,6 +191,7 @@ void parse_nmea(char *line)
 
                         // Update Time (Time format: HHMMSS.XX)
                         // time[0-1]=HH, time[2-3]=MM
+                        /*
                         char clock_str[6];
                         if (strlen(time) >= 4)
                         {
@@ -199,6 +199,7 @@ void parse_nmea(char *line)
                             if (ui_LabelTime)
                                 lv_label_set_text(ui_LabelTime, clock_str);
                         }
+                        */
                         example_lvgl_unlock();
                     }
                 }
@@ -288,10 +289,13 @@ void setup_max30102()
     }
     else
     {
-        ESP_LOGI("MAX30102", "MAX30102 initialized");
-        // Power=0x1F (Low/Medium ~6.4mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        // Power=0x1F (Low/Medium ~6.4mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        max30102.setup(0x1F, 4, 2, 400, 411, 4096);
+        ESP_LOGI("MAX30102", "MAX30102 initialized. Safe Mode Config...");
+        max30102.wakeUp();
+        // Power=0x1F, Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
+        max30102.setup(0x1F, 4, 2, 400, 411, 4096); 
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+        max30102.clearFIFO();
         fft_init(TEST_BUFFER_LENGTH);
     }
 }
@@ -353,11 +357,11 @@ bool isPressed = false;
 #endif
 
 #define EXAMPLE_LVGL_BUF_HEIGHT (EXAMPLE_LCD_V_RES / 8) // Reduced from /4 to improve stability with GSM
-#define EXAMPLE_LVGL_TICK_PERIOD_MS 2
+#define EXAMPLE_LVGL_TICK_PERIOD_MS 10 // Increased from 2ms for better stability
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1
-#define EXAMPLE_LVGL_TASK_STACK_SIZE (4 * 1024)
-#define EXAMPLE_LVGL_TASK_PRIORITY 2
+#define EXAMPLE_LVGL_TASK_STACK_SIZE (12 * 1024)
+#define EXAMPLE_LVGL_TASK_PRIORITY 15
 
 static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
     {0xFE, (uint8_t[]){0x00}, 1, 0},
@@ -766,20 +770,35 @@ void spp_write_cb(uint8_t *data, uint16_t len)
         item = cJSON_GetObjectItem(root, "sync_time");
         if (item && item->valuestring) {
             // Expected format: "YYYY-MM-DD HH:MM:SS"
-            struct tm t;
-            if (strptime(item->valuestring, "%Y-%m-%d %H:%M:%S", &t) != NULL) {
-                time_t epoch = mktime(&t);
-                struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
-                settimeofday(&tv, NULL);
-                ESP_LOGI("TIME", "System time synced to: %s", item->valuestring);
+            int year, month, day, hour, min, sec;
+            if (sscanf(item->valuestring, "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &min, &sec) == 6) {
+                struct tm t = {0};
+                t.tm_year = year - 1900;
+                t.tm_mon = month - 1;
+                t.tm_mday = day;
+                t.tm_hour = hour;
+                t.tm_min = min;
+                t.tm_sec = sec;
+                t.tm_isdst = -1; // Let mktime determine DST
                 
-                // Update UI immediately
-                if (example_lvgl_lock(-1)) {
-                    char clock_str[10];
-                    snprintf(clock_str, sizeof(clock_str), "%02d:%02d", t.tm_hour, t.tm_min);
-                    if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
-                    example_lvgl_unlock();
+                time_t epoch = mktime(&t);
+                if (epoch != (time_t)-1) {
+                    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+                    settimeofday(&tv, NULL);
+                    ESP_LOGI("TIME", "System time synced to: %s", item->valuestring);
+                    
+                    // Update UI immediately (optional, read_sensor_data does it at 1Hz)
+                    if (example_lvgl_lock(-1)) {
+                        char clock_str[10];
+                        snprintf(clock_str, sizeof(clock_str), "%02d:%02d", hour, min);
+                        if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
+                        example_lvgl_unlock();
+                    }
+                } else {
+                    ESP_LOGE("TIME", "Failed to convert time to epoch: %s", item->valuestring);
                 }
+            } else {
+                ESP_LOGE("TIME", "Invalid time format received: %s", item->valuestring);
             }
         }
 
@@ -790,6 +809,23 @@ void spp_write_cb(uint8_t *data, uint16_t len)
 
 // --- WiFi & Firestore REST Logic ---
 static bool s_wifi_connected = false;
+static bool s_wifi_init_done = false;
+void wifi_init_sta(void); 
+
+extern "C" void wifi_reconnect_now() {
+    g_wifi_enabled = 1;
+    if (!s_wifi_init_done) {
+        wifi_init_sta();
+    } else {
+        wifi_config_t wifi_config = {};
+        strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
+        strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
+        esp_wifi_disconnect();
+        esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+        esp_wifi_connect();
+        ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting...");
+    }
+}
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
@@ -842,6 +878,7 @@ void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI("WIFI", "wifi_init_sta finished.");
+    s_wifi_init_done = true;
 }
 
 esp_err_t send_to_firestore(const char* path, const char* post_data) {
@@ -1009,9 +1046,20 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "Install panel IO");
     esp_lcd_panel_io_handle_t io_handle = NULL;
-    const esp_lcd_panel_io_spi_config_t io_config = SH8601_PANEL_IO_QSPI_CONFIG(EXAMPLE_PIN_NUM_LCD_CS,
-                                                                                example_notify_lvgl_flush_ready,
-                                                                                &disp_drv);
+    const esp_lcd_panel_io_spi_config_t io_config = {
+        .cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS,
+        .dc_gpio_num = -1,
+        .spi_mode = 0,
+        .pclk_hz = 20 * 1000 * 1000, // Reduced to 20MHz for stability
+        .trans_queue_depth = 50,    // Increased further to 50
+        .on_color_trans_done = example_notify_lvgl_flush_ready,
+        .user_ctx = &disp_drv,
+        .lcd_cmd_bits = 32,
+        .lcd_param_bits = 8,
+        .flags = {
+            .quad_mode = true,
+        },
+    };
     sh8601_vendor_config_t vendor_config = {
         .init_cmds = lcd_init_cmds,
         .init_cmds_size = sizeof(lcd_init_cmds) / sizeof(lcd_init_cmds[0]),
@@ -1039,7 +1087,6 @@ extern "C" void app_main(void)
 
     setup_sensor();
     setup_max30102();
-
 #endif
 
 #if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
@@ -1163,8 +1210,8 @@ extern "C" void app_main(void)
 
         // Setup Sensor & Tasks immediately for responsive UI
         setup_accel();
-        xTaskCreate(read_sensor_data, "sensor_read_task", 4096, NULL, 10, NULL);
-        xTaskCreate(gps_task, "gps_task", 4096, NULL, 5, NULL);
+        xTaskCreate(read_sensor_data, "sensor_read_task", 8192, NULL, 3, NULL);
+        xTaskCreate(gps_task, "gps_task", 4096, NULL, 2, NULL);
 
         // --- Power Management Task (or just add to loop if lightweight) ---
         // For simplicity, we can do it in read_sensor_data or a timer.
@@ -1212,50 +1259,50 @@ void read_sensor_data(void *arg)
         if (screen_is_on)
         {
             max30102.check();
+            static int skipCount = 0;
             while (max30102.available())
             {
-                if (samplesCollected < TEST_BUFFER_LENGTH)
+                uint32_t r = max30102.getRed();
+                uint32_t ir = max30102.getIR();
+                
+                if (skipCount % 4 == 0) // Sensor is at 400Hz, we take every 4th sample to get 100Hz for FFT
                 {
-                    redBuffer[samplesCollected] = max30102.getRed();
-                    irBuffer[samplesCollected] = max30102.getIR();
-                    max30102.nextSample();
-                    samplesCollected++;
-
-                    // Algorithm: Run every time we fill the buffer (sliding window)
-                    if (samplesCollected == TEST_BUFFER_LENGTH)
+                    if (samplesCollected < TEST_BUFFER_LENGTH)
                     {
-                        // Convert to float for FFT
-                        for (int i = 0; i < TEST_BUFFER_LENGTH; i++)
-                        {
-                            redBufferFloat[i] = (float)redBuffer[i];
-                            irBufferFloat[i] = (float)irBuffer[i];
-                        }
-
-                        // Run FFT Algorithm (100Hz sampling rate)
-                        fft_process(redBufferFloat, irBufferFloat, TEST_BUFFER_LENGTH, 100, &fft_hr, &fft_spo2);
-
-                        // Update global variables
-                        heartRate = (int32_t)fft_hr;
-                        spo2 = (int32_t)fft_spo2;
-                        validHeartRate = (heartRate > 0);
-                        validSPO2 = (spo2 > 0);
-
-                        // ESP_LOGI("MAX30102", "HR: %ld, SpO2: %ld, Valid: %d/%d", heartRate, spo2, validHeartRate, validSPO2);
-
-                        // Shift buffer left by 50 samples (0.5s slide)
-                        int shift = 50;
-                        for (int i = shift; i < TEST_BUFFER_LENGTH; i++)
-                        {
-                            redBuffer[i - shift] = redBuffer[i];
-                            irBuffer[i - shift] = irBuffer[i];
-                        }
-                        samplesCollected = TEST_BUFFER_LENGTH - shift;
+                        redBuffer[samplesCollected] = r;
+                        irBuffer[samplesCollected] = ir;
+                        samplesCollected++;
                     }
                 }
-                else
+                max30102.nextSample(); // Advance pointer always
+                skipCount++;
+
+                // Algorithm: Run every time we fill the buffer (sliding window)
+                if (samplesCollected == TEST_BUFFER_LENGTH)
                 {
-                    // Safety: drain if overflow logic fails
-                    max30102.nextSample();
+                    // Convert to float for FFT
+                    for (int i = 0; i < TEST_BUFFER_LENGTH; i++)
+                    {
+                        redBufferFloat[i] = (float)redBuffer[i];
+                        irBufferFloat[i] = (float)irBuffer[i];
+                    }
+
+                    // Run FFT Algorithm (100Hz sampling rate matches our skipped count)
+                    fft_process(redBufferFloat, irBufferFloat, TEST_BUFFER_LENGTH, 100, &fft_hr, &fft_spo2);
+
+                    heartRate = (int32_t)fft_hr;
+                    spo2 = (int32_t)fft_spo2;
+                    validHeartRate = (heartRate > 0);
+                    validSPO2 = (spo2 > 0);
+
+                    // Shift buffer left by 50 samples
+                    int shift = 50;
+                    for (int i = shift; i < TEST_BUFFER_LENGTH; i++)
+                    {
+                        redBuffer[i - shift] = redBuffer[i];
+                        irBuffer[i - shift] = irBuffer[i];
+                    }
+                    samplesCollected = TEST_BUFFER_LENGTH - shift;
                 }
             }
         }
@@ -1586,7 +1633,7 @@ void read_sensor_data(void *arg)
             example_lvgl_unlock();
         }
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
 

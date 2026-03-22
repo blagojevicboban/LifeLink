@@ -46,7 +46,8 @@ private:
     uint8_t _i2cAddr;
 
 // Circular buffer for readings (minimal implementation for now)
-#define STORAGE_SIZE 4
+// Circular buffer for readings (increased from 4)
+#define STORAGE_SIZE 64
     uint32_t redBuffer[STORAGE_SIZE];
     uint32_t irBuffer[STORAGE_SIZE];
     uint8_t head;

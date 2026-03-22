@@ -36,6 +36,10 @@ static void toggle_sos_cb(lv_event_t *e) {
 static void edit_sms_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SMS); }
 static void edit_call_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_CALL); }
 static void edit_sos_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SOS); }
+extern void ui_Screen6_screen_init(void);
+static void edit_wifi_cb(lv_event_t *e) {
+    _ui_screen_change(&ui_Screen6, LV_SCR_LOAD_ANIM_MOVE_LEFT, 500, 0, &ui_Screen6_screen_init);
+}
 
 static lv_obj_t *create_row(lv_obj_t *parent, const char *label, int y, lv_event_cb_t toggle_cb, lv_event_cb_t edit_cb, bool current_state) {
     lv_obj_t *row = lv_obj_create(parent);
@@ -104,7 +108,7 @@ void ui_Screen3_screen_init(void)
 
     int sy = 90, gap = 55;
     create_row(ui_Screen3, "BLE", sy, ui_event_SwitchBLE, NULL, true);
-    create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, NULL, true);
+    create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, edit_wifi_cb, true);
     create_row(ui_Screen3, "SMS", sy + 2*gap, toggle_sms_cb, edit_sms_cb, g_w_enable_sms);
     create_row(ui_Screen3, "Poziv", sy + 3*gap, toggle_call_cb, edit_call_cb, g_w_enable_call);
     create_row(ui_Screen3, "SOS", sy + 4*gap, toggle_sos_cb, edit_sos_cb, g_w_enable_sos);
