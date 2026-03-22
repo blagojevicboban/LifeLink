@@ -291,8 +291,8 @@ void setup_max30102()
     {
         ESP_LOGI("MAX30102", "MAX30102 initialized. Safe Mode Config...");
         max30102.wakeUp();
-        // Power=0x0B (~2mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        max30102.setup(0x0B, 4, 2, 400, 411, 4096); 
+        // Power=0x1F (~6.4mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
+        max30102.setup(0x1F, 4, 2, 400, 411, 4096); 
         
         vTaskDelay(pdMS_TO_TICKS(100));
         max30102.clearFIFO();
@@ -356,12 +356,12 @@ bool isPressed = false;
 
 #endif
 
-#define EXAMPLE_LVGL_BUF_HEIGHT (EXAMPLE_LCD_V_RES / 8) // Reduced from /4 to improve stability with GSM
-#define EXAMPLE_LVGL_TICK_PERIOD_MS 10 // Increased from 2ms for better stability
+#define EXAMPLE_LVGL_BUF_HEIGHT (EXAMPLE_LCD_V_RES / 10) 
+#define EXAMPLE_LVGL_TICK_PERIOD_MS 10 
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1
 #define EXAMPLE_LVGL_TASK_STACK_SIZE (12 * 1024)
-#define EXAMPLE_LVGL_TASK_PRIORITY 15
+#define EXAMPLE_LVGL_TASK_PRIORITY 10
 
 static const sh8601_lcd_init_cmd_t lcd_init_cmds[] = {
     {0xFE, (uint8_t[]){0x00}, 1, 0},
@@ -1055,7 +1055,7 @@ extern "C" void app_main(void)
         .dc_gpio_num = -1,
         .spi_mode = 0,
         .pclk_hz = 20 * 1000 * 1000, // Reduced to 20MHz for stability
-        .trans_queue_depth = 100,    // Increased to 100 to prevent overflow during typing
+        .trans_queue_depth = 30,    // Stable value for DMA
         .on_color_trans_done = example_notify_lvgl_flush_ready,
         .user_ctx = &disp_drv,
         .lcd_cmd_bits = 32,
@@ -1103,9 +1103,10 @@ extern "C" void app_main(void)
     lv_init();
     // alloc draw buffers used by LVGL
     // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
-    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
+    // Use MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL for standard SPI DMA support on S3
+    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
     assert(buf1);
-    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
+    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
     assert(buf2);
     // initialize LVGL draw buffers
     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
@@ -1260,6 +1261,7 @@ void read_sensor_data(void *arg)
         // --- PEFORM SENSOR READS (NON-BLOCKING) ---
 
         // 1. MAX30102 Polling & Buffering (Only on Screen 1)
+        static bool s_max30102_sensing = false;
         bool on_sensor_screen = false;
         if (example_lvgl_lock(-1)) {
             if (ui_Screen1 && lv_scr_act() == ui_Screen1) on_sensor_screen = true;
@@ -1268,6 +1270,11 @@ void read_sensor_data(void *arg)
 
         if (screen_is_on && on_sensor_screen)
         {
+            if (!s_max30102_sensing) {
+                max30102.wakeUp();
+                s_max30102_sensing = true;
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
             max30102.check();
             static int skipCount = 0;
             while (max30102.available())
@@ -1318,10 +1325,12 @@ void read_sensor_data(void *arg)
         }
         else
         {
+            if (s_max30102_sensing) {
+                max30102.shutDown();
+                s_max30102_sensing = false;
+            }
             // Reset buffer logic when not on sensor screen to prevent old data
             samplesCollected = 0;
-            // Optionally clear FIFO if sensing is disabled for a long time
-            // max30102.clearFIFO(); 
         }
 
         // 2. QMI8658 Polling
