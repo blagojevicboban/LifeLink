@@ -8,58 +8,64 @@
 
 lv_obj_t *ui_Screen3 = NULL;
 lv_obj_t *ui_TextAreaPhone = NULL;
+lv_obj_t *ui_Screen3 = NULL;
 lv_obj_t *ui_SwitchBLE = NULL;
 lv_obj_t *ui_SwitchWiFi = NULL;
+lv_obj_t *ui_SwitchSMS = NULL;
+lv_obj_t *ui_SwitchCall = NULL;
+lv_obj_t *ui_SwitchSOS = NULL;
 
-static lv_obj_t *numpad_panel = NULL;
-static lv_obj_t *label_title = NULL;
-static lv_obj_t *label_saved = NULL;
-static lv_obj_t *ui_LabelBLE = NULL;
-static lv_obj_t *ui_LabelWiFi = NULL;
+extern bool g_w_enable_sms;
+extern bool g_w_enable_call;
+extern bool g_w_enable_sos;
+extern void save_settings();
 
-// Stored phone number (persisted in RAM, default value)
-static char g_phone_number[20] = "+3816*****";
-
-// --- Numpad button click handler ---
-static void numpad_btn_cb(lv_event_t *e)
-{
-    lv_obj_t *btn = lv_event_get_target(e);
-    const char *txt = lv_label_get_text(lv_obj_get_child(btn, 0));
-
-    if (strcmp(txt, LV_SYMBOL_BACKSPACE) == 0)
-    {
-        lv_textarea_del_char(ui_TextAreaPhone);
-    }
-    else
-    {
-        lv_textarea_add_text(ui_TextAreaPhone, txt);
-    }
-
-    // Auto-save the phone number as we type
-    const char *phone = lv_textarea_get_text(ui_TextAreaPhone);
-    strncpy(g_phone_number, phone, sizeof(g_phone_number) - 1);
-    g_phone_number[sizeof(g_phone_number) - 1] = '\0';
+static void toggle_sms_cb(lv_event_t *e) {
+    g_w_enable_sms = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    save_settings();
 }
+static void toggle_call_cb(lv_event_t *e) {
+    g_w_enable_call = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    save_settings();
+}
+static void toggle_sos_cb(lv_event_t *e) {
+    g_w_enable_sos = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    save_settings();
+}
+static void edit_sms_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SMS); }
+static void edit_call_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_CALL); }
+static void edit_sos_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SOS); }
 
-// --- Helper to create a numpad button ---
-static lv_obj_t *create_numpad_btn(lv_obj_t *parent, const char *text, int x, int y, int w, int h)
-{
-    lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, w, h);
-    lv_obj_set_pos(btn, x, y);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A2A3A), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, 255, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(0x3A5A7A), LV_PART_MAIN);
+static lv_obj_t *create_row(lv_obj_t *parent, const char *label, int y, lv_event_cb_t toggle_cb, lv_event_cb_t edit_cb, bool current_state) {
+    lv_obj_t *row = lv_obj_create(parent);
+    lv_obj_set_size(row, 360, 50);
+    lv_obj_set_pos(row, 50, y);
+    lv_obj_set_style_bg_opa(row, 0, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_center(lbl);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_t *lbl = lv_label_create(row);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_align(lbl, LV_ALIGN_LEFT_MID);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
 
-    lv_obj_add_event_cb(btn, numpad_btn_cb, LV_EVENT_CLICKED, NULL);
-    return btn;
+    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_set_size(sw, 45, 25);
+    lv_obj_set_align(sw, LV_ALIGN_CENTER);
+    if (current_state) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggle_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    if (edit_cb) {
+        lv_obj_t *btn = lv_btn_create(row);
+        lv_obj_set_size(btn, 70, 30);
+        lv_obj_set_align(btn, LV_ALIGN_RIGHT_MID);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x004488), 0);
+        lv_obj_t *bl = lv_label_create(btn);
+        lv_label_set_text(bl, "Podesi");
+        lv_obj_center(bl);
+        lv_obj_add_event_cb(btn, edit_cb, LV_EVENT_CLICKED, NULL);
+    }
+    return row;
 }
 
 // The test_sms_btn_cb has been removed since the button is no longer needed
@@ -81,111 +87,24 @@ void ui_event_Screen3(lv_event_t *e)
     }
 }
 
-// --- Screen Init ---
 void ui_Screen3_screen_init(void)
 {
     ui_Screen3 = lv_obj_create(NULL);
-    lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(ui_Screen3, lv_color_hex(0x000a14), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(ui_Screen3, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_Screen3, lv_color_hex(0x000a14), 0);
 
-    // --- Title ---
-    label_title = lv_label_create(ui_Screen3);
-    lv_obj_set_align(label_title, LV_ALIGN_TOP_MID);
-    lv_obj_set_y(label_title, 20);
-    lv_label_set_text(label_title, LV_SYMBOL_SETTINGS "  Podesavanja");
-    lv_obj_set_style_text_color(label_title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_t *title = lv_label_create(ui_Screen3);
+    lv_obj_set_align(title, LV_ALIGN_TOP_MID);
+    lv_obj_set_y(title, 40);
+    lv_label_set_text(title, "Podesavanja Sata");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_22, 0);
 
-    // --- BLE Switch ---
-    ui_LabelBLE = lv_label_create(ui_Screen3);
-    lv_obj_set_align(ui_LabelBLE, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_LabelBLE, "BLE");
-    lv_obj_set_x(ui_LabelBLE, -70);
-    lv_obj_set_y(ui_LabelBLE, 50);
-    lv_obj_set_style_text_font(ui_LabelBLE, &lv_font_montserrat_16, LV_PART_MAIN);
+    int sy = 90, gap = 55;
+    create_row(ui_Screen3, "BLE", sy, ui_event_SwitchBLE, NULL, lv_obj_has_state(ui_SwitchBLE?ui_SwitchBLE:ui_Screen3, LV_STATE_CHECKED));
+    create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, NULL, true);
+    create_row(ui_Screen3, "SMS", sy + 2*gap, toggle_sms_cb, edit_sms_cb, g_w_enable_sms);
+    create_row(ui_Screen3, "Poziv", sy + 3*gap, toggle_call_cb, edit_call_cb, g_w_enable_call);
+    create_row(ui_Screen3, "SOS", sy + 4*gap, toggle_sos_cb, edit_sos_cb, g_w_enable_sos);
 
-    ui_SwitchBLE = lv_switch_create(ui_Screen3);
-    lv_obj_set_size(ui_SwitchBLE, 45, 25);
-    lv_obj_set_align(ui_SwitchBLE, LV_ALIGN_TOP_MID);
-    lv_obj_set_x(ui_SwitchBLE, -20);
-    lv_obj_set_y(ui_SwitchBLE, 45);
-    lv_obj_add_state(ui_SwitchBLE, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(ui_SwitchBLE, ui_event_SwitchBLE, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // --- WiFi Switch ---
-    ui_LabelWiFi = lv_label_create(ui_Screen3);
-    lv_obj_set_align(ui_LabelWiFi, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_LabelWiFi, "WiFi");
-    lv_obj_set_x(ui_LabelWiFi, 35);
-    lv_obj_set_y(ui_LabelWiFi, 50);
-    lv_obj_set_style_text_font(ui_LabelWiFi, &lv_font_montserrat_16, LV_PART_MAIN);
-
-    ui_SwitchWiFi = lv_switch_create(ui_Screen3);
-    lv_obj_set_size(ui_SwitchWiFi, 45, 25);
-    lv_obj_set_align(ui_SwitchWiFi, LV_ALIGN_TOP_MID);
-    lv_obj_set_x(ui_SwitchWiFi, 85);
-    lv_obj_set_y(ui_SwitchWiFi, 45);
-    lv_obj_add_state(ui_SwitchWiFi, LV_STATE_CHECKED); // Will update dynamically later
-    lv_obj_add_event_cb(ui_SwitchWiFi, ui_event_SwitchWiFi, LV_EVENT_VALUE_CHANGED, NULL);
-
-    // --- Phone number label ---
-    lv_obj_t *lbl_phone = lv_label_create(ui_Screen3);
-    lv_obj_set_align(lbl_phone, LV_ALIGN_TOP_MID);
-    lv_obj_set_y(lbl_phone, 80);
-    lv_label_set_text(lbl_phone, "SMS Broj:");
-    lv_obj_set_style_text_color(lbl_phone, lv_color_hex(0x80C0FF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_phone, &lv_font_montserrat_16, LV_PART_MAIN);
-
-    // --- Text Area for phone number ---
-    ui_TextAreaPhone = lv_textarea_create(ui_Screen3);
-    lv_obj_set_size(ui_TextAreaPhone, 260, 38);
-    lv_obj_set_align(ui_TextAreaPhone, LV_ALIGN_TOP_MID);
-    lv_obj_set_y(ui_TextAreaPhone, 100);
-    lv_textarea_set_max_length(ui_TextAreaPhone, 16);
-    lv_textarea_set_one_line(ui_TextAreaPhone, true);
-    lv_textarea_set_text(ui_TextAreaPhone, g_phone_number);
-    lv_obj_set_style_text_font(ui_TextAreaPhone, &lv_font_montserrat_20, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(ui_TextAreaPhone, lv_color_hex(0x0A1A2A), LV_PART_MAIN);
-    lv_obj_set_style_text_color(ui_TextAreaPhone, lv_color_hex(0x00FF88), LV_PART_MAIN);
-    lv_obj_set_style_border_color(ui_TextAreaPhone, lv_color_hex(0x3A5A7A), LV_PART_MAIN);
-
-    // --- Saved confirmation label ---
-    label_saved = lv_label_create(ui_Screen3);
-    lv_obj_set_align(label_saved, LV_ALIGN_TOP_MID);
-    lv_obj_set_y(label_saved, 140);
-    lv_label_set_text(label_saved, "");
-    lv_obj_set_style_text_font(label_saved, &lv_font_montserrat_16, LV_PART_MAIN);
-
-    // --- Custom Numpad ---
-    // Shifted down slightly to fit switches
-    const int btn_w = 70;
-    const int btn_h = 42;
-    const int pad = 5;
-    const int start_x = 122;
-    const int start_y = 162;
-
-    // Row 1: 1 2 3
-    create_numpad_btn(ui_Screen3, "1", start_x + 0 * (btn_w + pad), start_y + 0 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "2", start_x + 1 * (btn_w + pad), start_y + 0 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "3", start_x + 2 * (btn_w + pad), start_y + 0 * (btn_h + pad), btn_w, btn_h);
-
-    // Row 2: 4 5 6
-    create_numpad_btn(ui_Screen3, "4", start_x + 0 * (btn_w + pad), start_y + 1 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "5", start_x + 1 * (btn_w + pad), start_y + 1 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "6", start_x + 2 * (btn_w + pad), start_y + 1 * (btn_h + pad), btn_w, btn_h);
-
-    // Row 3: 7 8 9
-    create_numpad_btn(ui_Screen3, "7", start_x + 0 * (btn_w + pad), start_y + 2 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "8", start_x + 1 * (btn_w + pad), start_y + 2 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "9", start_x + 2 * (btn_w + pad), start_y + 2 * (btn_h + pad), btn_w, btn_h);
-
-    // Row 4: + 0 Backspace
-    create_numpad_btn(ui_Screen3, "+", start_x + 0 * (btn_w + pad), start_y + 3 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, "0", start_x + 1 * (btn_w + pad), start_y + 3 * (btn_h + pad), btn_w, btn_h);
-    create_numpad_btn(ui_Screen3, LV_SYMBOL_BACKSPACE, start_x + 2 * (btn_w + pad), start_y + 3 * (btn_h + pad), btn_w, btn_h);
-
-    // --- Gesture for navigation ---
     lv_obj_add_event_cb(ui_Screen3, ui_event_Screen3, LV_EVENT_ALL, NULL);
 }
 
@@ -194,14 +113,11 @@ void ui_Screen3_screen_destroy(void)
     if (ui_Screen3)
         lv_obj_del(ui_Screen3);
     ui_Screen3 = NULL;
-    ui_TextAreaPhone = NULL;
     ui_SwitchBLE = NULL;
     ui_SwitchWiFi = NULL;
-    numpad_panel = NULL;
-    label_title = NULL;
-    label_saved = NULL;
-    ui_LabelBLE = NULL;
-    ui_LabelWiFi = NULL;
+    ui_SwitchSMS = NULL;
+    ui_SwitchCall = NULL;
+    ui_SwitchSOS = NULL;
 }
 
 const char *ui_get_phone_number(void)

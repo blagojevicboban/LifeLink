@@ -32,6 +32,11 @@
 #include "nvs.h"
 #include "cJSON.h"
 #include <sys/time.h>
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 
 // --- Global Settings Variables ---
 int g_screen_timeout_ms = 15000;
@@ -173,6 +178,7 @@ void parse_nmea(char *line)
                     if (example_lvgl_lock(-1))
                     {
                         lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
+                        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0x00FF00), LV_PART_MAIN); // GPS Icon
 
                         // Update Time (Time format: HHMMSS.XX)
                         // time[0-1]=HH, time[2-3]=MM
@@ -192,6 +198,7 @@ void parse_nmea(char *line)
                     if (example_lvgl_lock(-1))
                     {
                         lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
                         example_lvgl_unlock();
                     }
                 }
@@ -767,19 +774,173 @@ void spp_write_cb(uint8_t *data, uint16_t len)
     }
 }
 
+    }
+}
+
+// --- WiFi & Firestore REST Logic ---
+static bool s_wifi_connected = false;
+
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_wifi_connected = false;
+        if (g_wifi_enabled) esp_wifi_connect();
+        ESP_LOGI("WIFI", "retry to connect to the AP");
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI("WIFI", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        s_wifi_connected = true;
+    }
+}
+
+void wifi_init_sta(void) {
+    if (strlen(g_wifi_ssid) == 0) {
+        ESP_LOGW("WIFI", "SSID empty, skipping WiFi init");
+        return;
+    }
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config = {};
+    strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
+    strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
+    wifi_config.sta.threshold.rssi = -127;
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI("WIFI", "wifi_init_sta finished.");
+}
+
+esp_err_t send_to_firestore(const char* path, const char* post_data) {
+    if (!s_wifi_connected) return ESP_FAIL;
+
+    char url[256];
+    // NOTE: User must replace YOUR_PROJECT_ID
+    snprintf(url, sizeof(url), "https://firestore.googleapis.com/v1/projects/YOUR_PROJECT_ID/databases/(default)/documents/%s", path);
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
+
+    esp_err_t err = esp_http_client_perform(client);
+    if (err == ESP_OK) {
+        ESP_LOGI("FIRESTORE", "HTTP POST Status = %d", esp_http_client_get_status_code(client));
+    } else {
+        ESP_LOGE("FIRESTORE", "HTTP POST request failed: %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+    return err;
+}
+
+void wifi_upload_task(void *pvParameters) {
+    char mac_str[18];
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    while (1) {
+        if (s_wifi_connected && g_wifi_enabled) {
+            // Prepare Health Snapshot
+            cJSON *root = cJSON_CreateObject();
+            cJSON *fields = cJSON_CreateObject();
+            
+            // Firestore REST API format is verbose
+            auto add_int = [&](const char* key, int val) {
+                cJSON *v = cJSON_CreateObject();
+                cJSON_AddNumberToObject(v, "integerValue", val);
+                cJSON_AddItemToObject(fields, key, v);
+            };
+            auto add_double = [&](const char* key, double val) {
+                cJSON *v = cJSON_CreateObject();
+                cJSON_AddNumberToObject(v, "doubleValue", val);
+                cJSON_AddItemToObject(fields, key, v);
+            };
+            auto add_string = [&](const char* key, const char* val) {
+                cJSON *v = cJSON_CreateObject();
+                cJSON_AddStringToObject(v, "stringValue", val);
+                cJSON_AddItemToObject(fields, key, v);
+            };
+
+            add_int("pulse", g_pulse);
+            add_int("spo2", g_spo2);
+            add_double("gForce", g_total_g);
+            add_int("battery", g_battery_percent);
+            add_string("source", "wifi");
+
+            cJSON_AddItemToObject(root, "fields", fields);
+            char *post_data = cJSON_PrintUnformatted(root);
+            
+            char path[128];
+            snprintf(path, sizeof(path), "devices/%s/health_snapshots", mac_str);
+            send_to_firestore(path, post_data);
+
+            free(post_data);
+            cJSON_Delete(root);
+        }
+        vTaskDelay(pdMS_TO_TICKS(30000)); // Every 30s
+    }
+}
+
 extern "C" void toggle_wifi(bool enable) {
     g_wifi_enabled = enable;
     if (enable) {
         ESP_LOGI("WIFI", "WiFi Enabled via UI");
+        if (!s_wifi_connected) esp_wifi_connect();
     } else {
         ESP_LOGI("WIFI", "WiFi Disabled via UI");
+        esp_wifi_disconnect();
     }
 }
 
 extern "C" void app_main(void)
 {
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
     // Initialize I2C first
     ESP_ERROR_CHECK(i2c_init());
+
+    load_settings(); // Load WiFi etc.
+
+    if (g_wifi_enabled) {
+        wifi_init_sta();
+        xTaskCreate(wifi_upload_task, "wifi_upload_task", 8192, NULL, 5, NULL);
+    }
+
 
     // === WAVESHARE TCA9554 POWER ENABLE ===
     // This chip at 0x20 controls the AMOLED Power Enable and Reset pins!
@@ -1355,12 +1516,18 @@ void read_sensor_data(void *arg)
                     }
                 }
 
-                // Update Time (Mockup or from GPS)
-                // If GPS has time, use it. Else mock or use system time.
-                // For now, let's just make it tick or showing something static until we parse time
-                // ui_LabelTime is updated elsewhere or here.
+                // 2. Update Time from system clock (1Hz)
+                static time_t last_ui_time = 0;
+                time_t now_time = time(NULL);
+                if (now_time != last_ui_time) {
+                    last_ui_time = now_time;
+                    struct tm *timeinfo = localtime(&now_time);
+                    char clock_str[10];
+                    snprintf(clock_str, sizeof(clock_str), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
+                    if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
+                }
 
-                // 2. Check Screen Timeout
+                // 3. Check Screen Timeout
                 uint64_t now_ms = esp_timer_get_time() / 1000;
                 if (screen_is_on && (now_ms - last_touch_time > SCREEN_TIMEOUT_MS))
                 {
@@ -1405,10 +1572,12 @@ extern "C" void update_ble_connection_status(bool connected)
         if (connected)
         {
             lv_obj_set_style_text_color(ui_LabelBLT, lv_color_hex(0x00FF00), LV_PART_MAIN);
+            lv_obj_set_style_text_color(ui_Label05, lv_color_hex(0x00FF00), LV_PART_MAIN); // BLE Icon
         }
         else
         {
             lv_obj_set_style_text_color(ui_LabelBLT, lv_color_hex(0xFF0000), LV_PART_MAIN); // Red for disconnect
+            lv_obj_set_style_text_color(ui_Label05, lv_color_hex(0xFF0000), LV_PART_MAIN); // BLE Icon
         }
         example_lvgl_unlock();
     }
@@ -1422,6 +1591,7 @@ void gps_task(void *arg)
     if (example_lvgl_lock(-1))
     {
         lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
         example_lvgl_unlock();
     }
 

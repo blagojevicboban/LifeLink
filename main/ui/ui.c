@@ -3,7 +3,11 @@
 // LVGL version: 8.3.11
 // Project name: SquareLine_Project
 
-#include "ui.h"
+#include "screens/ui_Screen1.h"
+#include "screens/ui_Screen2.h"
+#include "screens/ui_Screen3.h"
+#include "screens/ui_Screen4.h"
+#include "screens/ui_Screen5.h"
 #include "ui_helpers.h"
 
 ///////////////////// VARIABLES ////////////////////
@@ -38,6 +42,7 @@ void ui_init(void)
     ui_Screen2_screen_init();
     ui_Screen3_screen_init();
     ui_Screen4_screen_init();
+    ui_Screen5_screen_init();
     ui____initial_actions0 = lv_obj_create(NULL);
     lv_disp_load_scr(ui_Screen1);
 }
@@ -48,4 +53,5 @@ void ui_destroy(void)
     ui_Screen2_screen_destroy();
     ui_Screen3_screen_destroy();
     ui_Screen4_screen_destroy();
+    ui_Screen5_screen_destroy();
 }

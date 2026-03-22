@@ -18,6 +18,7 @@ LifeLink is an advanced smartwatch prototype built on the **ESP32-S3** platform,
   - Intuitive gesture-based navigation (swipe left/right) between screens.
   - Dedicated "Settings" view featuring an on-screen numpad allowing users to register emergency SMS phone numbers without requiring an external mobile app.
 - **Sensor Debug View**: Accessible "DEBUG" toggle available in the UI to visualize live X, Y, Z, and G-force readings for rapid testing and threshold calibration.
+- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics to Firestore REST API without needing a mobile app nearby (optional).
 
 ## Companion Mobile App (Flutter)
 
@@ -55,6 +56,8 @@ Compile the source code and flash it directly to your connected device:
 idf.py build
 idf.py -p COM_PORT flash monitor
 ```
+### 3. WiFi & Firestore Config
+Set your WiFi credentials in `lifelink.cpp` or via the mobile app. Ensure `YOUR_PROJECT_ID` is updated in `lifelink.cpp` for Firestore REST API access.
 
 ## Application Flow
 
