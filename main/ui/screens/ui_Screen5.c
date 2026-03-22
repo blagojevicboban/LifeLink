@@ -49,6 +49,7 @@ static lv_obj_t *create_btn(lv_obj_t *parent, const char *text, int x, int y, in
     lv_obj_t *lbl = lv_label_create(btn);
     lv_label_set_text(lbl, text);
     lv_obj_center(lbl);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
     
     lv_obj_add_event_cb(btn, numpad_btn_cb, LV_EVENT_CLICKED, NULL);
     return btn;
@@ -63,6 +64,7 @@ void ui_Screen5_screen_init(void) {
     lv_obj_set_align(ui_LabelTitleNumpad, LV_ALIGN_TOP_MID);
     lv_obj_set_y(ui_LabelTitleNumpad, 30);
     lv_obj_set_style_text_font(ui_LabelTitleNumpad, &lv_font_montserrat_18, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ui_LabelTitleNumpad, lv_color_hex(0xFFFFFF), 0);
 
     if (current_edit_mode == EDIT_MODE_SMS) lv_label_set_text(ui_LabelTitleNumpad, "Podesi SMS Broj");
     else if (current_edit_mode == EDIT_MODE_CALL) lv_label_set_text(ui_LabelTitleNumpad, "Podesi Poziv Broj");
@@ -74,6 +76,7 @@ void ui_Screen5_screen_init(void) {
     lv_obj_set_y(ui_TextAreaNumpad, 60);
     lv_textarea_set_one_line(ui_TextAreaNumpad, true);
     lv_obj_set_style_text_font(ui_TextAreaNumpad, &lv_font_montserrat_22, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ui_TextAreaNumpad, lv_color_hex(0xFFFFFF), 0);
 
     if (current_edit_mode == EDIT_MODE_SMS) lv_textarea_set_text(ui_TextAreaNumpad, g_w_sms_numbers);
     else if (current_edit_mode == EDIT_MODE_CALL) lv_textarea_set_text(ui_TextAreaNumpad, g_w_call_numbers);

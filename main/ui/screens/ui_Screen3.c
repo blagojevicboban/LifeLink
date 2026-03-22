@@ -4,16 +4,17 @@
 #include "../ui.h"
 #include "esp_log.h"
 #include "gsm_a6.h"
+#include "ui_Screen5.h"
 #include <string.h>
 
 lv_obj_t *ui_Screen3 = NULL;
 lv_obj_t *ui_TextAreaPhone = NULL;
-lv_obj_t *ui_Screen3 = NULL;
 lv_obj_t *ui_SwitchBLE = NULL;
 lv_obj_t *ui_SwitchWiFi = NULL;
 lv_obj_t *ui_SwitchSMS = NULL;
 lv_obj_t *ui_SwitchCall = NULL;
 lv_obj_t *ui_SwitchSOS = NULL;
+char g_phone_number[20] = "";
 
 extern bool g_w_enable_sms;
 extern bool g_w_enable_call;
@@ -48,6 +49,7 @@ static lv_obj_t *create_row(lv_obj_t *parent, const char *label, int y, lv_event
     lv_label_set_text(lbl, label);
     lv_obj_set_align(lbl, LV_ALIGN_LEFT_MID);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
 
     lv_obj_t *sw = lv_switch_create(row);
     lv_obj_set_size(sw, 45, 25);
@@ -90,6 +92,7 @@ void ui_event_Screen3(lv_event_t *e)
 void ui_Screen3_screen_init(void)
 {
     ui_Screen3 = lv_obj_create(NULL);
+    lv_obj_clear_flag(ui_Screen3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(ui_Screen3, lv_color_hex(0x000a14), 0);
 
     lv_obj_t *title = lv_label_create(ui_Screen3);
@@ -97,9 +100,10 @@ void ui_Screen3_screen_init(void)
     lv_obj_set_y(title, 40);
     lv_label_set_text(title, "Podesavanja Sata");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
 
     int sy = 90, gap = 55;
-    create_row(ui_Screen3, "BLE", sy, ui_event_SwitchBLE, NULL, lv_obj_has_state(ui_SwitchBLE?ui_SwitchBLE:ui_Screen3, LV_STATE_CHECKED));
+    create_row(ui_Screen3, "BLE", sy, ui_event_SwitchBLE, NULL, true);
     create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, NULL, true);
     create_row(ui_Screen3, "SMS", sy + 2*gap, toggle_sms_cb, edit_sms_cb, g_w_enable_sms);
     create_row(ui_Screen3, "Poziv", sy + 3*gap, toggle_call_cb, edit_call_cb, g_w_enable_call);

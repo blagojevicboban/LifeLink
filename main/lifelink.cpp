@@ -37,6 +37,8 @@
 #include "esp_netif.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_mac.h"
+#include <string.h>
 
 // --- Global Settings Variables ---
 int g_screen_timeout_ms = 15000;
@@ -127,6 +129,10 @@ float fft_spo2 = 0;
 float g_latitude = 0.0f;
 float g_longitude = 0.0f;
 
+// Snapshots for WiFi/External Tasks
+float g_total_snapshot = 1.0f;
+int g_batt_pct_snapshot = 100;
+
 // Forward Declarations
 static bool example_lvgl_lock(int timeout_ms);
 static void example_lvgl_unlock(void);
@@ -174,11 +180,15 @@ void parse_nmea(char *line)
                     g_longitude = lon;
                     ESP_LOGI("GPS_PARSED", "Lat: %.5f, Lon: %.5f", g_latitude, g_longitude);
 
-                    // Update GPS Status Logic (Green)
+                        // Update GPS Status Logic (Green)
                     if (example_lvgl_lock(-1))
                     {
-                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
-                        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0x00FF00), LV_PART_MAIN); // GPS Icon
+                        if (ui_LabelGPS) {
+                            lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
+                        }
+                        if (ui_LabelGPS_Icon) {
+                            lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0x00FF00), LV_PART_MAIN); // GPS Icon
+                        }
 
                         // Update Time (Time format: HHMMSS.XX)
                         // time[0-1]=HH, time[2-3]=MM
@@ -197,8 +207,12 @@ void parse_nmea(char *line)
                     // Update GPS Status Logic (Red - No Fix)
                     if (example_lvgl_lock(-1))
                     {
-                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
-                        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
+                        if (ui_LabelGPS) {
+                            lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                        }
+                        if (ui_LabelGPS_Icon) {
+                            lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
+                        }
                         example_lvgl_unlock();
                     }
                 }
@@ -550,7 +564,7 @@ extern "C" void gsm_update_ui_status(const char *text)
         if (ui_LabelGSM_Icon)
         {
             lv_obj_set_style_text_color(ui_LabelGSM_Icon, lv_color_hex(0xFFA500), LV_PART_MAIN); // Orange indicating connecting/processing
-            lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0xFFA500), LV_PART_MAIN);
+            if (ui_LabelGSM_Text) lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0xFFA500), LV_PART_MAIN);
         }
         example_lvgl_unlock();
     }
@@ -623,7 +637,7 @@ void load_settings()
     }
 }
 
-void save_settings()
+extern "C" void save_settings()
 {
     nvs_handle_t my_handle;
     esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
@@ -774,9 +788,6 @@ void spp_write_cb(uint8_t *data, uint16_t len)
     }
 }
 
-    }
-}
-
 // --- WiFi & Firestore REST Logic ---
 static bool s_wifi_connected = false;
 
@@ -888,10 +899,10 @@ void wifi_upload_task(void *pvParameters) {
                 cJSON_AddItemToObject(fields, key, v);
             };
 
-            add_int("pulse", g_pulse);
-            add_int("spo2", g_spo2);
-            add_double("gForce", g_total_g);
-            add_int("battery", g_battery_percent);
+            add_int("pulse", (int)heartRate);
+            add_int("spo2", (int)spo2);
+            add_double("gForce", (double)g_total_snapshot);
+            add_int("battery", (int)g_batt_pct_snapshot);
             add_string("source", "wifi");
 
             cJSON_AddItemToObject(root, "fields", fields);
@@ -1097,9 +1108,11 @@ extern "C" void app_main(void)
                         lv_label_set_text(ui_LabelGSM, "GSM: OK!");
                         lv_obj_set_style_text_color(ui_LabelGSM, lv_color_hex(0x00FF00), LV_PART_MAIN);
                     }
+                    if (ui_LabelGSM_Text) {
+                        lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0x00FF00), LV_PART_MAIN);
+                    }
                     if (ui_LabelGSM_Icon) {
                         lv_obj_set_style_text_color(ui_LabelGSM_Icon, lv_color_hex(0x00FF00), LV_PART_MAIN);
-                        lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0x00FF00), LV_PART_MAIN);
                     }
                     example_lvgl_unlock();
                 }
@@ -1112,12 +1125,14 @@ extern "C" void app_main(void)
                 if (example_lvgl_lock(-1))
                 {
                     if (ui_LabelGSM) {
-                        lv_label_set_text(ui_LabelGSM, "GSM: RETRYING...");
+                        lv_label_set_text(ui_LabelGSM, "GSM: RETRY...");
                         lv_obj_set_style_text_color(ui_LabelGSM, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                    }
+                    if (ui_LabelGSM_Text) {
+                        lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0xFF0000), LV_PART_MAIN);
                     }
                     if (ui_LabelGSM_Icon) {
                         lv_obj_set_style_text_color(ui_LabelGSM_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN);
-                        lv_obj_set_style_text_color(ui_LabelGSM_Text, lv_color_hex(0xFF0000), LV_PART_MAIN);
                     }
                     example_lvgl_unlock();
                 }
@@ -1142,8 +1157,9 @@ extern "C" void app_main(void)
         ui_init(); // LifeLink UI initialization
 
         // Initial values
-        lv_label_set_text(ui_LabelTime, "12:00");
-        lv_label_set_text(ui_LabelInfo, "100%");
+        if (ui_LabelTime) lv_label_set_text(ui_LabelTime, "--:--");
+        if (ui_LabelInfo) lv_label_set_text(ui_LabelInfo, "LifeLink");
+        if (ui_LabelBatt) lv_label_set_text(ui_LabelBatt, "100%");
 
         // Setup Sensor & Tasks immediately for responsive UI
         setup_accel();
@@ -1174,12 +1190,19 @@ void read_sensor_data(void *arg)
     float g_total = 1.0f; // Default to 1G if not ready
     float gyro_total = 0.0f;
     static int g_batt_pct = 0; // Static to persist for Heartbeat
+    
+    // Globals for external tasks (like wifi upload)
+    extern float g_total_snapshot;
+    extern int g_batt_pct_snapshot;
 
     // Initialize labels
     // snprintf(info_str, sizeof(info_str), "Nadzor (Pot:%d, Pad:%d)", potentialFallCount, fallCount);
     // lv_label_set_text(ui_LabelInfo, info_str);
 
     int samplesCollected = 0;
+    
+    g_total_snapshot = g_total;
+    g_batt_pct_snapshot = g_batt_pct;
 
     while (1)
     {
@@ -1250,6 +1273,7 @@ void read_sensor_data(void *arg)
             if (qmi.getAccelerometer(acc.x, acc.y, acc.z) && qmi.getGyroscope(gyr.x, gyr.y, gyr.z))
             {
                 g_total = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+                g_total_snapshot = g_total;
                 gyro_total = sqrt(gyr.x * gyr.x + gyr.y * gyr.y + gyr.z * gyr.z);
                 qmi_updated = true;
             }
@@ -1481,6 +1505,7 @@ void read_sensor_data(void *arg)
                 // 1. Check Battery
                 int batt_mv = axp_get_batt_vol();
                 g_batt_pct = axp_get_batt_percent(); // Update global/static
+                g_batt_pct_snapshot = g_batt_pct;
                 int batt_pct = g_batt_pct;
                 bool charging = axp_is_charging(); // Optional
 
@@ -1499,19 +1524,19 @@ void read_sensor_data(void *arg)
                     if (charging)
                     {
                         snprintf(bat_str, sizeof(bat_str), LV_SYMBOL_CHARGE " %d%%", batt_pct);
-                        if (ui_LabelInfo)
+                        if (ui_LabelBatt)
                         {
-                            lv_label_set_text(ui_LabelInfo, bat_str);
-                            lv_obj_set_style_text_color(ui_LabelInfo, lv_color_hex(0x00FF00), LV_PART_MAIN); // Green
+                            lv_label_set_text(ui_LabelBatt, bat_str);
+                            lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0x00FF00), LV_PART_MAIN); // Green
                         }
                     }
                     else
                     {
                         snprintf(bat_str, sizeof(bat_str), "%d%%", batt_pct);
-                        if (ui_LabelInfo)
+                        if (ui_LabelBatt)
                         {
-                            lv_label_set_text(ui_LabelInfo, bat_str);
-                            lv_obj_set_style_text_color(ui_LabelInfo, lv_color_hex(0xFFFFFF), LV_PART_MAIN); // White
+                            lv_label_set_text(ui_LabelBatt, bat_str);
+                            lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0xFFFFFF), LV_PART_MAIN); // White
                         }
                     }
                 }
@@ -1572,12 +1597,12 @@ extern "C" void update_ble_connection_status(bool connected)
         if (connected)
         {
             lv_obj_set_style_text_color(ui_LabelBLT, lv_color_hex(0x00FF00), LV_PART_MAIN);
-            lv_obj_set_style_text_color(ui_Label05, lv_color_hex(0x00FF00), LV_PART_MAIN); // BLE Icon
+            lv_obj_set_style_text_color(ui_LabelBLE_Icon, lv_color_hex(0x00FF00), LV_PART_MAIN); // BLE Icon
         }
         else
         {
             lv_obj_set_style_text_color(ui_LabelBLT, lv_color_hex(0xFF0000), LV_PART_MAIN); // Red for disconnect
-            lv_obj_set_style_text_color(ui_Label05, lv_color_hex(0xFF0000), LV_PART_MAIN); // BLE Icon
+            lv_obj_set_style_text_color(ui_LabelBLE_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN); // BLE Icon
         }
         example_lvgl_unlock();
     }
@@ -1591,7 +1616,7 @@ void gps_task(void *arg)
     if (example_lvgl_lock(-1))
     {
         lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
-        lv_obj_set_style_text_color(ui_Label03, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
+        lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
         example_lvgl_unlock();
     }
 

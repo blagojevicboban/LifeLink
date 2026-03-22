@@ -14,6 +14,19 @@ lv_obj_t *ui_LabelGSM = NULL;
 lv_obj_t *ui_BtnSimulate = NULL;
 lv_obj_t *ui_LabelSimulate = NULL;
 lv_obj_t *ui_BtnDebug = NULL;
+lv_obj_t *ui_LabelAccX = NULL; // Renamed from 03
+lv_obj_t *ui_LabelAccY = NULL; // Renamed from 04
+lv_obj_t *ui_LabelAccZ = NULL; // Renamed from 05
+lv_obj_t *ui_Label06 = NULL; // Debug Header
+lv_obj_t *ui_LabelX = NULL;
+lv_obj_t *ui_LabelY = NULL;
+lv_obj_t *ui_LabelZ = NULL;
+lv_obj_t *ui_LabelG = NULL;
+lv_obj_t *ui_LabelGX = NULL; // Added
+lv_obj_t *ui_LabelGY = NULL; // Added
+lv_obj_t *ui_LabelGZ = NULL; // Added
+
+extern void btn_simulate_fall_cb(lv_event_t *e);
 // Settings Widgets
 // (Moved to Screen 3)
 // event funtions
@@ -78,45 +91,74 @@ void ui_Screen2_screen_init(void)
     lv_obj_set_y(ui_Label06, -190);
     lv_obj_set_align(ui_Label06, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Label06, "DEBUG SENSORS");
+    lv_obj_set_style_text_color(ui_Label06, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     // X Row
-    ui_Label03 = lv_label_create(ui_Screen2);
-    lv_obj_set_align(ui_Label03, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_Label03, "X:");
-    lv_obj_set_x(ui_Label03, -100);
-    lv_obj_set_y(ui_Label03, -120);
+    ui_LabelAccX = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelAccX, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelAccX, "X:");
+    lv_obj_set_x(ui_LabelAccX, -100);
+    lv_obj_set_y(ui_LabelAccX, -120);
+    lv_obj_set_style_text_color(ui_LabelAccX, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     ui_LabelX = lv_label_create(ui_Screen2);
     lv_obj_set_align(ui_LabelX, LV_ALIGN_CENTER);
     lv_label_set_text(ui_LabelX, "0.00");
     lv_obj_set_x(ui_LabelX, -40);
     lv_obj_set_y(ui_LabelX, -120);
+    lv_obj_set_style_text_color(ui_LabelX, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     // Y Row
-    ui_Label04 = lv_label_create(ui_Screen2);
-    lv_obj_set_align(ui_Label04, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_Label04, "Y:");
-    lv_obj_set_x(ui_Label04, -100);
-    lv_obj_set_y(ui_Label04, -80);
+    ui_LabelAccY = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelAccY, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelAccY, "Y:");
+    lv_obj_set_x(ui_LabelAccY, -100);
+    lv_obj_set_y(ui_LabelAccY, -80);
+    lv_obj_set_style_text_color(ui_LabelAccY, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     ui_LabelY = lv_label_create(ui_Screen2);
     lv_obj_set_align(ui_LabelY, LV_ALIGN_CENTER);
     lv_label_set_text(ui_LabelY, "0.00");
     lv_obj_set_x(ui_LabelY, -40);
     lv_obj_set_y(ui_LabelY, -80);
+    lv_obj_set_style_text_color(ui_LabelY, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     // Z Row
-    ui_Label05 = lv_label_create(ui_Screen2);
-    lv_obj_set_align(ui_Label05, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_Label05, "Z:");
-    lv_obj_set_x(ui_Label05, -100);
-    lv_obj_set_y(ui_Label05, -40);
+    ui_LabelAccZ = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelAccZ, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelAccZ, "Z:");
+    lv_obj_set_x(ui_LabelAccZ, -100);
+    lv_obj_set_y(ui_LabelAccZ, -40);
+    lv_obj_set_style_text_color(ui_LabelAccZ, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     ui_LabelZ = lv_label_create(ui_Screen2);
     lv_obj_set_align(ui_LabelZ, LV_ALIGN_CENTER);
     lv_label_set_text(ui_LabelZ, "0.00");
     lv_obj_set_x(ui_LabelZ, -40);
     lv_obj_set_y(ui_LabelZ, -40);
+    lv_obj_set_style_text_color(ui_LabelZ, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+
+    // Gyro Labels (added)
+    ui_LabelGX = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelGX, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelGX, "GX: 0");
+    lv_obj_set_style_text_color(ui_LabelGX, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_x(ui_LabelGX, 40);
+    lv_obj_set_y(ui_LabelGX, -120);
+
+    ui_LabelGY = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelGY, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelGY, "GY: 0");
+    lv_obj_set_style_text_color(ui_LabelGY, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_x(ui_LabelGY, 40);
+    lv_obj_set_y(ui_LabelGY, -80);
+
+    ui_LabelGZ = lv_label_create(ui_Screen2);
+    lv_obj_set_align(ui_LabelGZ, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelGZ, "GZ: 0");
+    lv_obj_set_style_text_color(ui_LabelGZ, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_x(ui_LabelGZ, 40);
+    lv_obj_set_y(ui_LabelGZ, -40);
 
     // G Total
     ui_LabelG = lv_label_create(ui_Screen2);
@@ -125,6 +167,7 @@ void ui_Screen2_screen_init(void)
     lv_obj_set_x(ui_LabelG, 0);
     lv_obj_set_y(ui_LabelG, 0);
     lv_obj_set_style_text_font(ui_LabelG, &lv_font_montserrat_36, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_LabelG, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
 
     // --- GSM STATUS ---
     ui_LabelGSM = lv_label_create(ui_Screen2);
