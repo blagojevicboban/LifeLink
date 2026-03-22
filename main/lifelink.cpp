@@ -291,8 +291,8 @@ void setup_max30102()
     {
         ESP_LOGI("MAX30102", "MAX30102 initialized. Safe Mode Config...");
         max30102.wakeUp();
-        // Power=0x1F, Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        max30102.setup(0x1F, 4, 2, 400, 411, 4096); 
+        // Power=0x0B (~2mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
+        max30102.setup(0x0B, 4, 2, 400, 411, 4096); 
         
         vTaskDelay(pdMS_TO_TICKS(100));
         max30102.clearFIFO();
@@ -820,8 +820,12 @@ extern "C" void wifi_reconnect_now() {
         wifi_config_t wifi_config = {};
         strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
         strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
+        
         esp_wifi_disconnect();
+        esp_wifi_stop();
+        esp_wifi_set_mode(WIFI_MODE_STA);
         esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+        esp_wifi_start();
         esp_wifi_connect();
         ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting...");
     }
@@ -1051,7 +1055,7 @@ extern "C" void app_main(void)
         .dc_gpio_num = -1,
         .spi_mode = 0,
         .pclk_hz = 20 * 1000 * 1000, // Reduced to 20MHz for stability
-        .trans_queue_depth = 50,    // Increased further to 50
+        .trans_queue_depth = 100,    // Increased to 100 to prevent overflow during typing
         .on_color_trans_done = example_notify_lvgl_flush_ready,
         .user_ctx = &disp_drv,
         .lcd_cmd_bits = 32,
@@ -1255,8 +1259,14 @@ void read_sensor_data(void *arg)
     {
         // --- PEFORM SENSOR READS (NON-BLOCKING) ---
 
-        // 1. MAX30102 Polling & Buffering
-        if (screen_is_on)
+        // 1. MAX30102 Polling & Buffering (Only on Screen 1)
+        bool on_sensor_screen = false;
+        if (example_lvgl_lock(-1)) {
+            if (ui_Screen1 && lv_scr_act() == ui_Screen1) on_sensor_screen = true;
+            example_lvgl_unlock();
+        }
+
+        if (screen_is_on && on_sensor_screen)
         {
             max30102.check();
             static int skipCount = 0;
@@ -1308,9 +1318,10 @@ void read_sensor_data(void *arg)
         }
         else
         {
-            // Reset buffer logic when screen is off to prevent old data upon waking
+            // Reset buffer logic when not on sensor screen to prevent old data
             samplesCollected = 0;
-            max30102.clearFIFO(); // Prevent internal sensor buffer overflow
+            // Optionally clear FIFO if sensing is disabled for a long time
+            // max30102.clearFIFO(); 
         }
 
         // 2. QMI8658 Polling
