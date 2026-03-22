@@ -46,6 +46,8 @@ extern "C"
     extern lv_obj_t *ui_LabelGPS;
     extern lv_obj_t *ui_LabelGSM_Text;
     extern lv_obj_t *ui_LabelGSM_Icon;
+    extern lv_obj_t *ui_LabelWIFI_Text;
+    extern lv_obj_t *ui_LabelWIFI_Icon;
     // CUSTOM VARIABLES
 
 #ifdef __cplusplus

@@ -27,6 +27,14 @@ static uint8_t ble_spp_connected = 0;
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool spp_notify_enabled = false;
 
+static spp_write_cb_t app_write_cb = NULL;
+static spp_read_cb_t app_read_cb = NULL;
+
+void ble_spp_server_register_callbacks(spp_write_cb_t write_cb, spp_read_cb_t read_cb) {
+    app_write_cb = write_cb;
+    app_read_cb = read_cb;
+}
+
 static int gatt_svr_chr_access_spp(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg);
 
@@ -58,14 +66,35 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
 static int gatt_svr_chr_access_spp(uint16_t conn_handle, uint16_t attr_handle,
                                    struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    // Handle read/write if needed
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR)
     {
-        // Can verify valid access if needed
+        if (app_read_cb) {
+            uint8_t *data = NULL;
+            uint16_t len = 0;
+            app_read_cb(&data, &len);
+            if (data && len > 0) {
+                int rc = os_mbuf_append(ctxt->om, data, len);
+                free(data); // Free the allocated string
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+        }
         return 0;
     }
-    // Write logic can be added here
-    return 0;
+    else if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR)
+    {
+        uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+        if (len > 0 && app_write_cb) {
+            uint8_t *buf = malloc(len + 1);
+            if (buf) {
+                os_mbuf_copydata(ctxt->om, 0, len, buf);
+                buf[len] = '\0'; // Null-terminate for safety if expected to be JSON/String
+                app_write_cb(buf, len);
+                free(buf);
+            }
+        }
+        return 0;
+    }
+    return BLE_ATT_ERR_UNLIKELY;
 }
 
 static void gatt_svr_subscribe_cb(struct ble_gap_event *event)

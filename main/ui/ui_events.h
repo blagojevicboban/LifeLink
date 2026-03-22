@@ -12,7 +12,7 @@ extern "C"
 #endif
 
     void ui_event_SwitchBLE(lv_event_t *e);
-    void ui_event_SwitchSound(lv_event_t *e);
+    void ui_event_SwitchWiFi(lv_event_t *e);
 
 #ifdef __cplusplus
 } /*extern "C"*/

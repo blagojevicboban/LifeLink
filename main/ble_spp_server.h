@@ -10,8 +10,12 @@ extern "C"
 {
 #endif
 
-    void ble_spp_server_init(void);
-    void ble_spp_server_send_data(uint8_t *data, uint16_t len);
+typedef void (*spp_write_cb_t)(uint8_t *data, uint16_t len);
+typedef void (*spp_read_cb_t)(uint8_t **data, uint16_t *len);
+
+void ble_spp_server_init(void);
+void ble_spp_server_register_callbacks(spp_write_cb_t write_cb, spp_read_cb_t read_cb);
+void ble_spp_server_send_data(uint8_t *data, uint16_t len);
     void update_ble_connection_status(bool connected);
     void ble_spp_server_advertise(void);
     void ble_spp_server_stop_advertising(void);

@@ -28,8 +28,31 @@
 #include "fft_algo.h"
 #include "axp2101.h"
 #include "gsm_a6.h"
-#define SCREEN_TIMEOUT_MS 15000 // 15 seconds timeout
+#include "nvs_flash.h"
+#include "nvs.h"
+#include "cJSON.h"
+#include <sys/time.h>
 
+// --- Global Settings Variables ---
+int g_screen_timeout_ms = 15000;
+float g_fall_threshold_low = 0.6f;
+float g_fall_threshold_high = 3.5f;
+float g_stillness_tolerance = 0.2f;
+float g_angle_threshold_deg = 60.0f;
+int g_stillness_duration_ms = 5000;
+
+bool g_wifi_enabled = false;
+char g_wifi_ssid[32] = "";
+char g_wifi_pass[64] = "";
+bool g_w_enable_sms = false;
+char g_w_sms_numbers[128] = "";
+bool g_w_enable_call = false;
+char g_w_call_numbers[128] = "";
+bool g_w_enable_sos = false;
+char g_w_sos_number[20] = "";
+int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
+
+#define SCREEN_TIMEOUT_MS g_screen_timeout_ms // Backward compatibility with existing code
 extern "C" void start_fall_countdown_ui(bool is_simulated);
 
 // SensorQMI8658 ACCELEROMETER BEGIN
@@ -40,11 +63,11 @@ extern "C" void start_fall_countdown_ui(bool is_simulated);
 #define TCA9554_ADDR   0x20
 #define QMI8658_ADDRESS 0x6B // Replace with your QMI8658 address
 // --- Konstante za detekciju pada (Advanced) ---
-#define FALL_THRESHOLD_LOW 0.6f    // Free fall threshold (<0.6G)
-#define FALL_THRESHOLD_HIGH 3.5f   // Impact threshold (>3.5G)
-#define STILLNESS_TOLERANCE 0.2f   // Tolerance for 1G stillness
-#define ANGLE_THRESHOLD_DEG 60.0f  // Orientation change threshold
-#define STILLNESS_DURATION_MS 5000 // Duration to confirm stillness
+#define FALL_THRESHOLD_LOW g_fall_threshold_low
+#define FALL_THRESHOLD_HIGH g_fall_threshold_high
+#define STILLNESS_TOLERANCE g_stillness_tolerance
+#define ANGLE_THRESHOLD_DEG g_angle_threshold_deg
+#define STILLNESS_DURATION_MS g_stillness_duration_ms
 
 enum FallDetectionState
 {
@@ -149,7 +172,7 @@ void parse_nmea(char *line)
                     // Update GPS Status Logic (Green)
                     if (example_lvgl_lock(-1))
                     {
-                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN | LV_STATE_DEFAULT);
+                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
 
                         // Update Time (Time format: HHMMSS.XX)
                         // time[0-1]=HH, time[2-3]=MM
@@ -168,7 +191,7 @@ void parse_nmea(char *line)
                     // Update GPS Status Logic (Red - No Fix)
                     if (example_lvgl_lock(-1))
                     {
-                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
+                        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
                         example_lvgl_unlock();
                     }
                 }
@@ -550,6 +573,209 @@ static void example_lvgl_port_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
     }
 }
+// --- Settings Management ---
+void load_settings()
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err == ESP_OK)
+    {
+        nvs_get_i32(my_handle, "screen_timeout", (int32_t *)&g_screen_timeout_ms);
+
+        uint32_t val;
+        if (nvs_get_u32(my_handle, "fall_low", &val) == ESP_OK)
+            g_fall_threshold_low = *(float *)&val;
+        if (nvs_get_u32(my_handle, "fall_high", &val) == ESP_OK)
+            g_fall_threshold_high = *(float *)&val;
+        if (nvs_get_u32(my_handle, "still_tol", &val) == ESP_OK)
+            g_stillness_tolerance = *(float *)&val;
+        if (nvs_get_u32(my_handle, "angle_thr", &val) == ESP_OK)
+            g_angle_threshold_deg = *(float *)&val;
+        nvs_get_i32(my_handle, "still_dur", (int32_t *)&g_stillness_duration_ms);
+
+        size_t sz = sizeof(g_wifi_ssid);
+        nvs_get_str(my_handle, "wifi_ssid", g_wifi_ssid, &sz);
+        sz = sizeof(g_wifi_pass);
+        nvs_get_str(my_handle, "wifi_pass", g_wifi_pass, &sz);
+        sz = sizeof(g_w_sms_numbers);
+        nvs_get_str(my_handle, "sms_nums", g_w_sms_numbers, &sz);
+        sz = sizeof(g_w_call_numbers);
+        nvs_get_str(my_handle, "call_nums", g_w_call_numbers, &sz);
+        sz = sizeof(g_w_sos_number);
+        nvs_get_str(my_handle, "sos_num", g_w_sos_number, &sz);
+
+        uint8_t b_val;
+        if (nvs_get_u8(my_handle, "wifi_en", &b_val) == ESP_OK) g_wifi_enabled = b_val;
+        if (nvs_get_u8(my_handle, "en_sms", &b_val) == ESP_OK) g_w_enable_sms = b_val;
+        if (nvs_get_u8(my_handle, "en_call", &b_val) == ESP_OK) g_w_enable_call = b_val;
+        if (nvs_get_u8(my_handle, "en_sos", &b_val) == ESP_OK) g_w_enable_sos = b_val;
+        nvs_get_i32(my_handle, "act_orig", (int32_t *)&g_action_origin);
+
+        nvs_close(my_handle);
+        ESP_LOGI("SETTINGS", "Loaded settings from NVS");
+    }
+}
+
+void save_settings()
+{
+    nvs_handle_t my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err == ESP_OK)
+    {
+        nvs_set_i32(my_handle, "screen_timeout", g_screen_timeout_ms);
+
+        uint32_t val;
+        val = *(uint32_t *)&g_fall_threshold_low;
+        nvs_set_u32(my_handle, "fall_low", val);
+        val = *(uint32_t *)&g_fall_threshold_high;
+        nvs_set_u32(my_handle, "fall_high", val);
+        val = *(uint32_t *)&g_stillness_tolerance;
+        nvs_set_u32(my_handle, "still_tol", val);
+        val = *(uint32_t *)&g_angle_threshold_deg;
+        nvs_set_u32(my_handle, "angle_thr", val);
+        nvs_set_i32(my_handle, "still_dur", g_stillness_duration_ms);
+
+        nvs_set_str(my_handle, "wifi_ssid", g_wifi_ssid);
+        nvs_set_str(my_handle, "wifi_pass", g_wifi_pass);
+        nvs_set_str(my_handle, "sms_nums", g_w_sms_numbers);
+        nvs_set_str(my_handle, "call_nums", g_w_call_numbers);
+        nvs_set_str(my_handle, "sos_num", g_w_sos_number);
+
+        nvs_set_u8(my_handle, "wifi_en", g_wifi_enabled);
+        nvs_set_u8(my_handle, "en_sms", g_w_enable_sms);
+        nvs_set_u8(my_handle, "en_call", g_w_enable_call);
+        nvs_set_u8(my_handle, "en_sos", g_w_enable_sos);
+        nvs_set_i32(my_handle, "act_orig", g_action_origin);
+
+        nvs_commit(my_handle);
+        nvs_close(my_handle);
+        ESP_LOGI("SETTINGS", "Saved settings to NVS");
+    }
+}
+
+void spp_read_cb(uint8_t **data, uint16_t *len)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "screen_timeout", g_screen_timeout_ms);
+    cJSON_AddNumberToObject(root, "fall_low", g_fall_threshold_low);
+    cJSON_AddNumberToObject(root, "fall_high", g_fall_threshold_high);
+    cJSON_AddNumberToObject(root, "still_tol", g_stillness_tolerance);
+    cJSON_AddNumberToObject(root, "angle_thr", g_angle_threshold_deg);
+    cJSON_AddNumberToObject(root, "still_dur", g_stillness_duration_ms);
+
+    cJSON_AddBoolToObject(root, "wifi_en", g_wifi_enabled);
+    cJSON_AddBoolToObject(root, "en_sms", g_w_enable_sms);
+    cJSON_AddBoolToObject(root, "en_call", g_w_enable_call);
+    cJSON_AddBoolToObject(root, "en_sos", g_w_enable_sos);
+    cJSON_AddNumberToObject(root, "act_orig", g_action_origin);
+    cJSON_AddStringToObject(root, "wifi_ssid", g_wifi_ssid);
+    cJSON_AddStringToObject(root, "wifi_pass", g_wifi_pass);
+    cJSON_AddStringToObject(root, "sms_nums", g_w_sms_numbers);
+    cJSON_AddStringToObject(root, "call_nums", g_w_call_numbers);
+    cJSON_AddStringToObject(root, "sos_num", g_w_sos_number);
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    *len = strlen(json_str);
+    *data = (uint8_t *)strdup(json_str);
+
+    free(json_str);
+    cJSON_Delete(root);
+}
+
+void spp_write_cb(uint8_t *data, uint16_t len)
+{
+    ESP_LOGI("SETTINGS", "Received write: %.*s", len, data);
+    cJSON *root = cJSON_Parse((char *)data);
+    if (root)
+    {
+        cJSON *item = cJSON_GetObjectItem(root, "screen_timeout");
+        if (item)
+            g_screen_timeout_ms = item->valueint;
+
+        item = cJSON_GetObjectItem(root, "fall_low");
+        if (item)
+            g_fall_threshold_low = item->valuedouble;
+
+        item = cJSON_GetObjectItem(root, "fall_high");
+        if (item)
+            g_fall_threshold_high = item->valuedouble;
+
+        item = cJSON_GetObjectItem(root, "still_tol");
+        if (item)
+            g_stillness_tolerance = item->valuedouble;
+
+        item = cJSON_GetObjectItem(root, "angle_thr");
+        if (item)
+            g_angle_threshold_deg = item->valuedouble;
+
+        item = cJSON_GetObjectItem(root, "still_dur");
+        if (item)
+            g_stillness_duration_ms = item->valueint;
+
+        item = cJSON_GetObjectItem(root, "wifi_en");
+        if (item) g_wifi_enabled = cJSON_IsTrue(item);
+        
+        item = cJSON_GetObjectItem(root, "en_sms");
+        if (item) g_w_enable_sms = cJSON_IsTrue(item);
+        
+        item = cJSON_GetObjectItem(root, "en_call");
+        if (item) g_w_enable_call = cJSON_IsTrue(item);
+        
+        item = cJSON_GetObjectItem(root, "en_sos");
+        if (item) g_w_enable_sos = cJSON_IsTrue(item);
+        
+        item = cJSON_GetObjectItem(root, "act_orig");
+        if (item) g_action_origin = item->valueint;
+        
+        item = cJSON_GetObjectItem(root, "wifi_ssid");
+        if (item && item->valuestring) strncpy(g_wifi_ssid, item->valuestring, sizeof(g_wifi_ssid) - 1);
+        
+        item = cJSON_GetObjectItem(root, "wifi_pass");
+        if (item && item->valuestring) strncpy(g_wifi_pass, item->valuestring, sizeof(g_wifi_pass) - 1);
+        
+        item = cJSON_GetObjectItem(root, "sms_nums");
+        if (item && item->valuestring) strncpy(g_w_sms_numbers, item->valuestring, sizeof(g_w_sms_numbers) - 1);
+        
+        item = cJSON_GetObjectItem(root, "call_nums");
+        if (item && item->valuestring) strncpy(g_w_call_numbers, item->valuestring, sizeof(g_w_call_numbers) - 1);
+        
+        item = cJSON_GetObjectItem(root, "sos_num");
+        if (item && item->valuestring) strncpy(g_w_sos_number, item->valuestring, sizeof(g_w_sos_number) - 1);
+        
+        item = cJSON_GetObjectItem(root, "sync_time");
+        if (item && item->valuestring) {
+            // Expected format: "YYYY-MM-DD HH:MM:SS"
+            struct tm t;
+            if (strptime(item->valuestring, "%Y-%m-%d %H:%M:%S", &t) != NULL) {
+                time_t epoch = mktime(&t);
+                struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+                settimeofday(&tv, NULL);
+                ESP_LOGI("TIME", "System time synced to: %s", item->valuestring);
+                
+                // Update UI immediately
+                if (example_lvgl_lock(-1)) {
+                    char clock_str[10];
+                    snprintf(clock_str, sizeof(clock_str), "%02d:%02d", t.tm_hour, t.tm_min);
+                    if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
+                    example_lvgl_unlock();
+                }
+            }
+        }
+
+        save_settings();
+        cJSON_Delete(root);
+    }
+}
+
+extern "C" void toggle_wifi(bool enable) {
+    g_wifi_enabled = enable;
+    if (enable) {
+        ESP_LOGI("WIFI", "WiFi Enabled via UI");
+    } else {
+        ESP_LOGI("WIFI", "WiFi Disabled via UI");
+    }
+}
+
 extern "C" void app_main(void)
 {
     // Initialize I2C first
@@ -582,6 +808,10 @@ extern "C" void app_main(void)
 
     // Initialize BLE first to ensure resources are available
     ble_spp_server_init();
+
+    // Load settings from NVS AFTER flash init in ble_spp_server_init
+    load_settings();
+    ble_spp_server_register_callbacks(spp_write_cb, spp_read_cb);
 
     static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
     static lv_disp_drv_t disp_drv;      // contains callback functions
@@ -1191,7 +1421,7 @@ void gps_task(void *arg)
     // Ensure GPS Label is Red initially
     if (example_lvgl_lock(-1))
     {
-        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
         example_lvgl_unlock();
     }
 

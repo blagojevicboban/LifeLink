@@ -36,6 +36,8 @@ lv_obj_t *ui_LabelBLT = NULL;
 lv_obj_t *ui_LabelGPS = NULL;
 lv_obj_t *ui_LabelGSM_Text = NULL;
 lv_obj_t *ui_LabelGSM_Icon = NULL;
+lv_obj_t *ui_LabelWIFI_Text = NULL;
+lv_obj_t *ui_LabelWIFI_Icon = NULL;
 // event funtions
 void ui_event_Screen1(lv_event_t *e)
 {
@@ -105,6 +107,27 @@ void ui_Screen1_screen_init(void)
     lv_label_set_text(ui_LabelGSM_Icon, LV_SYMBOL_WIFI); // Closest to a signal indicator
     lv_obj_set_style_text_color(ui_LabelGSM_Icon, lv_color_hex(0x808080), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_LabelGSM_Icon, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    // WiFi
+    ui_LabelWIFI_Text = lv_label_create(ui_Screen1);
+    lv_obj_set_width(ui_LabelWIFI_Text, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_LabelWIFI_Text, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_LabelWIFI_Text, 74);
+    lv_obj_set_y(ui_LabelWIFI_Text, -180);
+    lv_obj_set_align(ui_LabelWIFI_Text, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelWIFI_Text, "WIFI");
+    lv_obj_set_style_text_color(ui_LabelWIFI_Text, lv_color_hex(0x808080), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_LabelWIFI_Text, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_LabelWIFI_Icon = lv_label_create(ui_Screen1);
+    lv_obj_set_width(ui_LabelWIFI_Icon, LV_SIZE_CONTENT);
+    lv_obj_set_height(ui_LabelWIFI_Icon, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_LabelWIFI_Icon, 74);
+    lv_obj_set_y(ui_LabelWIFI_Icon, -155);
+    lv_obj_set_align(ui_LabelWIFI_Icon, LV_ALIGN_CENTER);
+    lv_label_set_text(ui_LabelWIFI_Icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_color(ui_LabelWIFI_Icon, lv_color_hex(0x808080), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_LabelWIFI_Icon, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     // Battery / Info
     ui_LabelInfo = lv_label_create(ui_Screen1);
@@ -269,4 +292,6 @@ void ui_Screen1_screen_destroy(void)
     ui_LabelGPS = NULL;
     ui_LabelGSM_Text = NULL;
     ui_LabelGSM_Icon = NULL;
+    ui_LabelWIFI_Text = NULL;
+    ui_LabelWIFI_Icon = NULL;
 }

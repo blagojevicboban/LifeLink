@@ -9,13 +9,13 @@
 lv_obj_t *ui_Screen3 = NULL;
 lv_obj_t *ui_TextAreaPhone = NULL;
 lv_obj_t *ui_SwitchBLE = NULL;
-lv_obj_t *ui_SwitchSound = NULL;
+lv_obj_t *ui_SwitchWiFi = NULL;
 
 static lv_obj_t *numpad_panel = NULL;
 static lv_obj_t *label_title = NULL;
 static lv_obj_t *label_saved = NULL;
 static lv_obj_t *ui_LabelBLE = NULL;
-static lv_obj_t *ui_LabelSound = NULL;
+static lv_obj_t *ui_LabelWiFi = NULL;
 
 // Stored phone number (persisted in RAM, default value)
 static char g_phone_number[20] = "+3816*****";
@@ -113,21 +113,21 @@ void ui_Screen3_screen_init(void)
     lv_obj_add_state(ui_SwitchBLE, LV_STATE_CHECKED);
     lv_obj_add_event_cb(ui_SwitchBLE, ui_event_SwitchBLE, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // --- Sound Switch ---
-    ui_LabelSound = lv_label_create(ui_Screen3);
-    lv_obj_set_align(ui_LabelSound, LV_ALIGN_TOP_MID);
-    lv_label_set_text(ui_LabelSound, "SND");
-    lv_obj_set_x(ui_LabelSound, 35);
-    lv_obj_set_y(ui_LabelSound, 50);
-    lv_obj_set_style_text_font(ui_LabelSound, &lv_font_montserrat_16, LV_PART_MAIN);
+    // --- WiFi Switch ---
+    ui_LabelWiFi = lv_label_create(ui_Screen3);
+    lv_obj_set_align(ui_LabelWiFi, LV_ALIGN_TOP_MID);
+    lv_label_set_text(ui_LabelWiFi, "WiFi");
+    lv_obj_set_x(ui_LabelWiFi, 35);
+    lv_obj_set_y(ui_LabelWiFi, 50);
+    lv_obj_set_style_text_font(ui_LabelWiFi, &lv_font_montserrat_16, LV_PART_MAIN);
 
-    ui_SwitchSound = lv_switch_create(ui_Screen3);
-    lv_obj_set_size(ui_SwitchSound, 45, 25);
-    lv_obj_set_align(ui_SwitchSound, LV_ALIGN_TOP_MID);
-    lv_obj_set_x(ui_SwitchSound, 85);
-    lv_obj_set_y(ui_SwitchSound, 45);
-    lv_obj_add_state(ui_SwitchSound, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(ui_SwitchSound, ui_event_SwitchSound, LV_EVENT_VALUE_CHANGED, NULL);
+    ui_SwitchWiFi = lv_switch_create(ui_Screen3);
+    lv_obj_set_size(ui_SwitchWiFi, 45, 25);
+    lv_obj_set_align(ui_SwitchWiFi, LV_ALIGN_TOP_MID);
+    lv_obj_set_x(ui_SwitchWiFi, 85);
+    lv_obj_set_y(ui_SwitchWiFi, 45);
+    lv_obj_add_state(ui_SwitchWiFi, LV_STATE_CHECKED); // Will update dynamically later
+    lv_obj_add_event_cb(ui_SwitchWiFi, ui_event_SwitchWiFi, LV_EVENT_VALUE_CHANGED, NULL);
 
     // --- Phone number label ---
     lv_obj_t *lbl_phone = lv_label_create(ui_Screen3);
@@ -196,12 +196,12 @@ void ui_Screen3_screen_destroy(void)
     ui_Screen3 = NULL;
     ui_TextAreaPhone = NULL;
     ui_SwitchBLE = NULL;
-    ui_SwitchSound = NULL;
+    ui_SwitchWiFi = NULL;
     numpad_panel = NULL;
     label_title = NULL;
     label_saved = NULL;
     ui_LabelBLE = NULL;
-    ui_LabelSound = NULL;
+    ui_LabelWiFi = NULL;
 }
 
 const char *ui_get_phone_number(void)
