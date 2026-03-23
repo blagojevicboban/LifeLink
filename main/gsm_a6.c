@@ -363,3 +363,23 @@ void gsm_send_sms_async(const char *phone_number, const char *message)
         xTaskCreate(send_sms_task, "sms_task", 6144, params, 5, NULL);
     }
 }
+
+esp_err_t gsm_make_call(const char *phone_number)
+{
+    if (phone_number == NULL)
+        return ESP_FAIL;
+
+    ESP_LOGI(TAG, "Initiating voice call to %s...", phone_number);
+
+    char cmd[64];
+    // ATD + number + ; (the semicolon is for voice calls)
+    snprintf(cmd, sizeof(cmd), "ATD%s;\r\n", phone_number);
+
+    return gsm_send_at_cmd(cmd, "OK", 5000);
+}
+
+esp_err_t gsm_hang_up(void)
+{
+    ESP_LOGI(TAG, "Hanging up call...");
+    return gsm_send_at_cmd("ATH\r\n", "OK", 5000);
+}

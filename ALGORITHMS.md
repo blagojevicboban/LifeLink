@@ -17,11 +17,11 @@ We use the **Fast Fourier Transform (FFT)** to analyze the Photoplethysmogram (P
 2.  **Windowing**: Apply a **Hann Window** to reduce spectral leakage.
 3.  **FFT**: Compute the complex FFT using `dsps_fft2r_fc32`.
 4.  **Power Spectrum**: Calculate magnitudes for both Red and IR channels.
-5.  **Peak Detection**: Find the dominant frequency bin in the 0.5Hz - 4.0Hz range (30 - 240 BPM).
-6.  **SpO2 Calculation**:
+5. **Peak Detection**: Find the dominant frequency bin in the 0.8Hz - 4.0Hz range (48 - 240 BPM). Small frequency artifacts below 0.8Hz are ignored to reduce noise from slow-movement or breathing.
+6. **SpO2 Calculation**:
     - Extract AC components (Peak Magnitude) and DC components (Mean) for Red and IR.
     - Calculate Ratio $R = \frac{AC_{red}/DC_{red}}{AC_{ir}/DC_{ir}}$.
-    - Apply formula: $SpO_2 = 110 - 25 \times R$.
+    - Apply calibrated reflective formula for wrist sensing: $SpO_2 = 104 - 17 \times R$.
 
 ---
 

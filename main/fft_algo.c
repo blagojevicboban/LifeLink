@@ -101,8 +101,8 @@ void fft_process(float *red_samples, float *ir_samples, int fft_size, int sampli
     int max_idx = 0;
     float max_mag = 0;
 
-    // Search range: 0.7 Hz (42 BPM) to 3.5 Hz (210 BPM)
-    int bin_start = (int)(0.7f * fft_size / sampling_freq);
+    // Search range: 0.8 Hz (48 BPM) to 3.5 Hz (210 BPM)
+    int bin_start = (int)(0.8f * fft_size / sampling_freq);
     int bin_end = (int)(3.5f * fft_size / sampling_freq);
 
     if (bin_start < 2)
@@ -132,9 +132,9 @@ void fft_process(float *red_samples, float *ir_samples, int fft_size, int sampli
     // R = (AC_red / DC_red) / (AC_ir / DC_ir)
     float R = (ac_red / red_dc) / (ac_ir / ir_dc);
 
-    // Standard calibration formula (e.g., typically SpO2 = 110 - 25 * R)
-    // Adjust based on Maxim/reference data
-    float spo2 = 110.0f - 25.0f * R;
+    // Standard calibration formula: SpO2 = A - B * R
+    // Many MAX30102 implementations use 104 - 17*R for reflective
+    float spo2 = 104.0f - 17.0f * R;
 
     // Clamp values
     if (spo2 > 100)

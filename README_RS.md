@@ -6,18 +6,20 @@ LifeLink je napredni prototip pametnog sata izgrađen na **ESP32-S3** platformi.
 
 ## Glavne Funkcionalnosti
 
-- **Napredna Detekcija Pada**: Koristi QMI8658 IMU (Akcelerometar + Žiroskop) za otkrivanje naglih padova i jakih udaraca o tlo. Zahteva period zadržavanja u nepomičnom stanju i specifičnu promenu ugla nagiba nakon udara kako bi potvrdio pravi pad a izbegao lažne uzbune (prilikom npr. trčanja ili naglih pokreta ruke).
-- **Simulacija Pada & Poništavanje**: Korisnici mogu lako testirati sistem simulacijom pada preko samog interfejsa sata. Pravi pad okida 5-sekundno odbrojavanje na ekranu; ako je greška ili korisniku nije potrebna pomoć, jednim dodirom po ekranu proces se poništava i prekidaju se hitne akcije.
-- **Automatski GSM SMS Alarmi**: Komunicira sa SIM800L GSM Modulom kako bi asinhrono (u pozadini) poslao SMS upozorenja koja sadrže:
-  - Precizne GPS koordinate formatirane kao direktan Google Maps link (Lokacija gde se osoba nalazi).
-  - Otkucaje srca u sekundi akcidenta.
-  - Informaciju da li je pad bio stvaran ili samo test/simulacija.
-- **Zdravstveni Parametri Uživo**: Sistem redovno očitava brzinu pulsa i oksigenaciju krvi u procentima (SpO2) uz pomoć MAX30102 senzora na poleđini. Novi podaci se uvek sveže ažuriraju na početnom ekranu.
-- **Interaktivni Korisnički Interfejs (LVGL)**: 
-  - Dinamična statusna traka na vrhu ekrana sa indikatorima za GPS konekciju, GSM povezanost (sa promenom boje u zavisnosti od signala), status Baterije i Bluetooth Mreže.
-  - Navigacija putem prevlačenja prsta po ekranu nalevo i nadesno (Meni gestovi).
-  - Zaseban "Podešavanja ekran" sa ugrađenom namenskom uveličanom numeričkom tastaturom koja pojednostavljuje unos ili promenu telefonskog broja hitne službe ili bliskog lica (nije potrebna aplikacija na telefonu).
-- **Pregled Senzora (Debug)**: Lako dostupan "DEBUG" prekidač i pogled implementiran pravo u UI sistem koji omogućava programerima uživo posmatranje X, Y, Z , i G sile, korisno zbog finog štelovanja parametara padova.
+- **Napredna Detekcija Pada**: Koristi QMI8658 IMU (Akcelerometar + Žiroskop) za otkrivanje naglih padova i jakih udaraca o tlo. Zahteva period zadržavanja u nepomičnom stanju i specifičnu promenu ugla nagiba nakon udara kako bi potvrdio pravi pad a izbegao lažne uzbune.
+- **Optimizovan MAX30102 Algoritam**: Precizno očitavanje pulsa i kiseonika (SpO2) koristeći FFT (Brzu Furijeovu Transformaciju) na prozoru od 100Hz.
+  - **Odbacivanje šuma/artefakata**: Filtrira niske frekvencije (ispod 45 BPM) i fiziološki nemoguće vrednosti (preko 220 BPM).
+  - **Reflektivna kalibracija**: Prilagođena formula za SpO2 (`104 - 17*R`) optimizovana za merenje na zglobu ruke.
+- **Autonomni Hitni Odgovor**: Sat može raditi potpuno nezavisno od mobilne aplikacije u hitnim situacijama:
+  - **Sekvencijalni SMS**: Šalje SOS poruke na više brojeva hitnih kontakata.
+  - **Sekvencijalni Pozivi**: Automatski poziva kontakte po prioritetu ako se detektuje pad.
+  - **SOS Poziv**: Brzo biranje primarnog hitnog broja.
+- **I2C Fast Mode (400kHz)**: Optimizovana brzina komunikacije između procesora i svih senzora (MAX30102, QMI8658, AXP2101) za maksimalnu stabilnost podataka.
+- **Automatski GSM SMS Alarmi**: Komunicira sa SIM800L/A6 GSM Modulom kako bi asinhrono poslao SMS upozorenja koja sadrže:
+  - Precizne GPS koordinate formatirane kao direktan Google Maps link.
+  - Otkucaje srca u realnom vremenu u trenutku pada.
+  - Informaciju o tipu pada (stvaran ili simuliran).
+- **WiFi Sinhronizacija sa Cloud-om**: Direktno povezivanje na WiFi i slanje zdravstvenih snapshot-ova u Firestore bazu svakih 30 sekundi radi daljinskog praćenja.
 
 ## Prateća Mobilna Aplikacija (Flutter)
 

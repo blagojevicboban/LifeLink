@@ -54,6 +54,19 @@ extern "C"
     esp_err_t gsm_send_sms(const char *phone_number, const char *message);
     void gsm_send_sms_async(const char *phone_number, const char *message);
 
+    /**
+     * @brief Initiate a voice call.
+     * @param phone_number The recipient's phone number as a string.
+     * @return ESP_OK on success, ESP_FAIL on failure.
+     */
+    esp_err_t gsm_make_call(const char *phone_number);
+
+    /**
+     * @brief Hang up an active call.
+     * @return ESP_OK on success, ESP_FAIL on failure.
+     */
+    esp_err_t gsm_hang_up(void);
+
 #ifdef __cplusplus
 }
 #endif

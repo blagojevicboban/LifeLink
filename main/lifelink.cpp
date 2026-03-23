@@ -57,6 +57,8 @@ char g_w_call_numbers[128] = "";
 bool g_w_enable_sos = false;
 char g_w_sos_number[20] = "";
 int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
+static bool s_wifi_connected = false;
+static bool s_wifi_init_done = false;
 
 #define SCREEN_TIMEOUT_MS g_screen_timeout_ms // Backward compatibility with existing code
 extern "C" void start_fall_countdown_ui(bool is_simulated);
@@ -99,7 +101,7 @@ MAX30102 max30102;
 static const char *TAGA = "QMI8658"; // Define a tag for logging
 
 // I2C configuration consolidated below
-#define I2C_MASTER_FREQ_HZ 100000
+#define I2C_MASTER_FREQ_HZ 400000
 #define I2C_MASTER_SDA_IO (gpio_num_t) I2C_MASTER_SDA
 #define I2C_MASTER_SCL_IO (gpio_num_t) I2C_MASTER_SCL
 
@@ -291,8 +293,8 @@ void setup_max30102()
     {
         ESP_LOGI("MAX30102", "MAX30102 initialized. Safe Mode Config...");
         max30102.wakeUp();
-        // Power=0x1F (~6.4mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        max30102.setup(0x1F, 4, 2, 400, 411, 4096); 
+        // Power=0x3F (~12.5mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
+        max30102.setup(0x3F, 4, 2, 400, 411, 4096); 
         
         vTaskDelay(pdMS_TO_TICKS(100));
         max30102.clearFIFO();
@@ -394,6 +396,7 @@ esp_err_t i2c_init(void)
 void read_sensor_data(void *arg); // Function declaration
 void gps_task(void *arg);
 void gsm_status_task(void *arg);
+extern "C" void wifi_reconnect_now();
 
 void setup_sensor()
 {
@@ -524,7 +527,7 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
             data->point.x = x[0];
             data->point.y = y[0];
             data->state = LV_INDEV_STATE_PRESSED;
-            ESP_LOGI(TAG, "Touch[%d]: X=%d Y=%d", i, x[i], y[i]);
+            // ESP_LOGI(TAG, "Touch[%d]: X=%d Y=%d", i, x[i], y[i]);
 
             // Reset Timeout on Touch
             reset_screen_timer();
@@ -803,13 +806,19 @@ void spp_write_cb(uint8_t *data, uint16_t len)
         }
 
         save_settings();
+
+        // Apply WiFi changes immediately if enabled or credentials changed
+        if (g_wifi_enabled) {
+            wifi_reconnect_now();
+        } else if (s_wifi_init_done) {
+            esp_wifi_stop();
+        }
+
         cJSON_Delete(root);
     }
 }
 
 // --- WiFi & Firestore REST Logic ---
-static bool s_wifi_connected = false;
-static bool s_wifi_init_done = false;
 void wifi_init_sta(void); 
 
 extern "C" void wifi_reconnect_now() {
@@ -834,14 +843,21 @@ extern "C" void wifi_reconnect_now() {
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI("WIFI", "WiFi station started, connecting to %s...", g_wifi_ssid);
         esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
+        ESP_LOGI("WIFI", "Connected to AP successfully!");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
-        if (g_wifi_enabled) esp_wifi_connect();
-        ESP_LOGI("WIFI", "retry to connect to the AP");
+        wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
+        ESP_LOGW("WIFI", "Disconnected from AP, reason: %d", event->reason);
+        if (g_wifi_enabled) {
+            ESP_LOGI("WIFI", "Attempting reconnection...");
+            esp_wifi_connect();
+        }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI("WIFI", "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI("WIFI", "Successfully got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_wifi_connected = true;
     }
 }
@@ -855,7 +871,16 @@ void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     esp_netif_create_default_wifi_sta();
 
+    ESP_LOGI("WIFI", "Free Heap before wifi_init: %lu, Internal: %lu, PSRAM: %lu", 
+             (unsigned long)esp_get_free_heap_size(), 
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    // Memory optimization: Reduce internal RAM footprint
+    cfg.static_rx_buf_num = 4;
+    cfg.dynamic_rx_buf_num = 16;
+    
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     esp_event_handler_instance_t instance_any_id;
@@ -877,11 +902,12 @@ void wifi_init_sta(void) {
     wifi_config.sta.threshold.rssi = -127;
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
+    ESP_LOGI("WIFI", "Initializing WiFi STA with SSID: %s", g_wifi_ssid);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_LOGI("WIFI", "wifi_init_sta finished.");
+    ESP_LOGI("WIFI", "wifi_init_sta sequence completed.");
     s_wifi_init_done = true;
 }
 
@@ -951,6 +977,7 @@ void wifi_upload_task(void *pvParameters) {
             
             char path[128];
             snprintf(path, sizeof(path), "devices/%s/health_snapshots", mac_str);
+            ESP_LOGI("WIFI_TASK", "Uploading health snapshot to Firestore: %s (HR: %ld, SpO2: %ld)", path, heartRate, spo2);
             send_to_firestore(path, post_data);
 
             free(post_data);
@@ -963,7 +990,7 @@ void wifi_upload_task(void *pvParameters) {
 extern "C" void toggle_wifi(bool enable) {
     g_wifi_enabled = enable;
     if (enable) {
-        ESP_LOGI("WIFI", "WiFi Enabled via UI");
+        ESP_LOGI("WIFI", "WiFi Enabled via UI (SSID: %s)", g_wifi_ssid);
         if (!s_wifi_connected) esp_wifi_connect();
     } else {
         ESP_LOGI("WIFI", "WiFi Disabled via UI");
@@ -1103,10 +1130,10 @@ extern "C" void app_main(void)
     lv_init();
     // alloc draw buffers used by LVGL
     // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
-    // Use MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL for standard SPI DMA support on S3
-    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+    // Memory optimization: move LVGL draw buffers to SPIRAM to free up internal RAM for WiFi/BLE
+    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
     assert(buf1);
-    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
     assert(buf2);
     // initialize LVGL draw buffers
     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
@@ -1309,8 +1336,8 @@ void read_sensor_data(void *arg)
 
                     heartRate = (int32_t)fft_hr;
                     spo2 = (int32_t)fft_spo2;
-                    validHeartRate = (heartRate > 0);
-                    validSPO2 = (spo2 > 0);
+                    validHeartRate = (heartRate >= 45 && heartRate <= 220);
+                    validSPO2 = (spo2 >= 50 && spo2 <= 100);
 
                     // Shift buffer left by 50 samples
                     int shift = 50;
@@ -1364,9 +1391,8 @@ void read_sensor_data(void *arg)
             }
 
             // Finger Detection Threshold
-            // With 0x7F power, valid finger signal should be > 100,000.
-            // Ambient noise is usually < 20,000.
-            if (avgIR < 50000)
+            // With 0x3F power, valid finger signal should be > 30,000.
+            if (avgIR < 20000)
             {
                 heartRate = 0;
                 spo2 = 0;
@@ -1377,9 +1403,9 @@ void read_sensor_data(void *arg)
             // Always update Pulse/SpO2 if valid
             char puls_str[16] = "--";
             char spo_str[16] = "--";
-            if (validHeartRate && heartRate > 30 && heartRate < 220)
+            if (validHeartRate)
                 snprintf(puls_str, sizeof(puls_str), "%ld", heartRate);
-            if (validSPO2 && spo2 > 50 && spo2 <= 100)
+            if (validSPO2)
                 snprintf(spo_str, sizeof(spo_str), "%ld", spo2);
 
             // Rate limiting for Log and UI
@@ -1899,6 +1925,7 @@ extern "C" void trigger_fall_sms(void)
     snprintf(sms_msg, sizeof(sms_msg), "UPOZORENJE! Detektovan SIMULIRAN pad!\nLokacija: https://maps.google.com/?q=%.6f,%.6f\nPuls: %ld",
              g_latitude, g_longitude, heartRate);
 
+    // For simulation, we still use the single number from UI for safety/test
     gsm_send_sms_async(ui_get_phone_number(), sms_msg);
 }
 
@@ -1906,11 +1933,62 @@ extern "C" void trigger_real_fall_sms(void)
 {
     ESP_LOGE("ALERT", "=== REAL FALL DETECTED (Timer reached 0) ===");
 
-    char sms_msg[160];
-    snprintf(sms_msg, sizeof(sms_msg), "UPOZORENJE! Detektovan pad!\nLokacija: https://maps.google.com/?q=%.6f,%.6f\nPuls: %ld",
-             g_latitude, g_longitude, heartRate);
+    // 0: Watch Only, 1: App + Watch
+    if (g_action_origin == 1) {
+        ESP_LOGI("ALERT", "Action Origin is 'App + Watch'. Watch deferred action to App.");
+        // The watch already sent BLE message so App should be handling it.
+        return;
+    }
 
-    gsm_send_sms_async(ui_get_phone_number(), sms_msg);
+    char google_maps_url[128];
+    snprintf(google_maps_url, sizeof(google_maps_url), "https://maps.google.com/?q=%.6f,%.6f", g_latitude, g_longitude);
+
+    // 1. Send SMS if enabled
+    if (g_w_enable_sms && strlen(g_w_sms_numbers) > 0) {
+        char *nums = strdup(g_w_sms_numbers);
+        char *token = strtok(nums, ",");
+        while (token != NULL) {
+            char sms_msg[160];
+            snprintf(sms_msg, sizeof(sms_msg), "SOS! LifeLink detektovao pad!\nLokacija: %s\nPuls: %ld",
+                     google_maps_url, heartRate);
+            
+            // Trim whitespace if any
+            while(*token == ' ') token++;
+            
+            ESP_LOGI("ALERT", "Sending SOS SMS to: %s", token);
+            gsm_send_sms_async(token, sms_msg);
+            token = strtok(NULL, ",");
+        }
+        free(nums);
+    }
+
+    // 2. Sequential Calls if enabled
+    if (g_w_enable_call && strlen(g_w_call_numbers) > 0) {
+        char *nums = strdup(g_w_call_numbers);
+        char *token = strtok(nums, ",");
+        while (token != NULL) {
+             // Trim whitespace if any
+            while(*token == ' ') token++;
+            
+            ESP_LOGI("ALERT", "Initiating sequential call to: %s", token);
+            gsm_make_call(token);
+            
+            // Wait for call (A6/SIM800 requires some time or manual hangup check)
+            // For simplicity, we wait 15s then hang up and try next, unless answered?
+            // Actually, gsm_make_call is synchronous if it waits for OK.
+            vTaskDelay(pdMS_TO_TICKS(15000));
+            gsm_hang_up();
+            
+            token = strtok(NULL, ",");
+        }
+        free(nums);
+    }
+
+    // 3. SOS Call if enabled (Highest Priority / Final Action)
+    if (g_w_enable_sos && strlen(g_w_sos_number) > 0) {
+        ESP_LOGI("ALERT", "Initiating emergency SOS call to: %s", g_w_sos_number);
+        gsm_make_call(g_w_sos_number);
+    }
 }
 
 extern "C" void toggle_sound(bool enable)

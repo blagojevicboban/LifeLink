@@ -7,18 +7,19 @@ LifeLink is an advanced smartwatch prototype built on the **ESP32-S3** platform,
 ## Features
 
 - **Advanced Fall Detection**: Utilizes the QMI8658 IMU (Accelerometer + Gyroscope) to detect sudden drops (Free Fall) and hard impacts. It requires extended stillness after an impact coupled with an orientation shift to confirm a real fall and avoid false alarms.
-- **Fall Simulation & Override**: Users can simulate a fall via the interactive UI for testing purposes. Real falls trigger an immediate 5-second on-screen countdown; if it's a false alarm, users can tap to cancel before an alert is dispatched.
-- **Automated GSM Emergency SMS**: Communicates with a SIM800L GSM Module to send background SMS alerts containing:
+- **Improved MAX30102 Algorithm**: Hand-tuned heart rate and SpO2 calculation using FFT on a 100Hz sampling window. 
+  - **Artifact Rejection**: Filters out low-frequency noise (below 45 BPM) and physiologically impossible values (above 220 BPM).
+  - **Reflective Optimization**: Calibrated SpO2 formula (`104 - 17*R`) specifically for wrist-based reflective sensing.
+- **Autonomous Emergency Response**: The watch can operate fully independently of the mobile app in an emergency:
+  - **Sequential SMS**: Sends custom SOS messages to multiple emergency contacts.
+  - **Sequential Calls**: Automatically initiates voice calls to primary contacts if a fall is confirmed.
+  - **SOS Call**: One-button or automatic priority emergency dispatch.
+- **I2C Fast Mode (400kHz)**: Optimized I2C bus clock speed for ultra-reliable communication across all shared sensors (MAX30102, QMI8658, AXP2101).
+- **Automated GSM Emergency SMS**: Communicates with a SIM800L/A6 GSM Module to send background SMS alerts containing:
   - Precise GPS coordinates formatted as a direct Google Maps link.
-  - Heart rate at the time of the event.
+  - Real-time heart rate at the time of the event.
   - Contextual warnings stating whether the fall was real or simulated.
-- **Live Health Monitoring**: Reads heart rate (BPM) and blood oxygen saturation (SpO2) using a MAX30102 sensor. Values are constantly updated on the primary watch face.
-- **Interactive UI (LVGL)**: 
-  - Dynamic top status bar indicating GPS lock, Cellular Network registration, Battery Levels, and BLE connectivity.
-  - Intuitive gesture-based navigation (swipe left/right) between screens.
-  - Dedicated "Settings" view featuring an on-screen numpad allowing users to register emergency SMS phone numbers without requiring an external mobile app.
-- **Sensor Debug View**: Accessible "DEBUG" toggle available in the UI to visualize live X, Y, Z, and G-force readings for rapid testing and threshold calibration.
-- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics to Firestore REST API without needing a mobile app nearby (optional).
+- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics to Firestore REST API every 30 seconds for remote dashboard monitoring.
 
 ## Companion Mobile App (Flutter)
 
