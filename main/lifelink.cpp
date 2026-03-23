@@ -1026,6 +1026,12 @@ void wifi_upload_task(void *pvParameters) {
             add_double("gForce", (double)g_total_snapshot);
             add_int("battery", (int)g_batt_pct_snapshot);
             add_string("source", "wifi");
+            
+            // Add GPS coordinates if available
+            if (g_latitude != 0.0f || g_longitude != 0.0f) {
+                add_double("lat", (double)g_latitude);
+                add_double("lon", (double)g_longitude);
+            }
 
             cJSON_AddItemToObject(root, "fields", fields);
             char *post_data = cJSON_PrintUnformatted(root);

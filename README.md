@@ -19,7 +19,9 @@ LifeLink is an advanced smartwatch prototype built on the **ESP32-S3** platform,
   - Precise GPS coordinates formatted as a direct Google Maps link.
   - Real-time heart rate at the time of the event.
   - Contextual warnings stating whether the fall was real or simulated.
-- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics to Firestore REST API every 30 seconds for remote dashboard monitoring.
+- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics and GPS coordinates to Firestore REST API every 30 seconds for remote dashboard monitoring.
+- **Always-On Display (AOD)**: Energy-efficient idle mode showing time on a dimmed black background, extending battery life while maintaining utility.
+- **NMEA GPS Support**: Integrated parsing of NMEA strings from external GPS modules for precise location tracking.
 
 ## Companion Mobile App (Flutter)
 
