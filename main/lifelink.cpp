@@ -50,6 +50,14 @@ int g_stillness_duration_ms = 5000;
 bool g_wifi_enabled = false;
 char g_wifi_ssid[32] = "";
 char g_wifi_pass[64] = "";
+bool g_w_enable_sms = false;
+char g_w_sms_numbers[128] = "";
+bool g_w_enable_call = false;
+char g_w_call_numbers[128] = "";
+bool g_w_enable_sos = false;
+char g_w_sos_number[20] = "";
+int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
+
 bool g_is_aod_mode = true;
 static uint64_t g_last_touch_time = 0; // Moved to global for AOD access
 
@@ -323,6 +331,7 @@ void setup_max30102()
 static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
 esp_lcd_panel_handle_t panel_handle = NULL; // Moved to global for power management
+esp_lcd_panel_io_handle_t io_handle = NULL;   // Global for brightness control
 
 #define LCD_HOST SPI2_HOST
 #define TOUCH_HOST I2C_NUM_0
@@ -1122,7 +1131,7 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     ESP_LOGI(TAG, "Install panel IO");
-    esp_lcd_panel_io_handle_t io_handle = NULL;
+    // esp_lcd_panel_io_handle_t io_handle = NULL; // Removed local to use global
     const esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = EXAMPLE_PIN_NUM_LCD_CS,
         .dc_gpio_num = -1,
