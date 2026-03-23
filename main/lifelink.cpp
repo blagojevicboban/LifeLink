@@ -50,13 +50,30 @@ int g_stillness_duration_ms = 5000;
 bool g_wifi_enabled = false;
 char g_wifi_ssid[32] = "";
 char g_wifi_pass[64] = "";
-bool g_w_enable_sms = false;
-char g_w_sms_numbers[128] = "";
-bool g_w_enable_call = false;
-char g_w_call_numbers[128] = "";
-bool g_w_enable_sos = false;
-char g_w_sos_number[20] = "";
-int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
+bool g_is_aod_mode = true;
+static uint64_t g_last_touch_time = 0; // Moved to global for AOD access
+
+lv_obj_t *ui_AODScreen = NULL;
+lv_obj_t *ui_AODTime = NULL;
+
+extern "C" lv_obj_t * ui_Screen1; // Dashboard
+
+void create_aod_screen() {
+    ui_AODScreen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(ui_AODScreen, lv_color_hex(0x000000), 0);
+    
+    ui_AODTime = lv_label_create(ui_AODScreen);
+    lv_obj_center(ui_AODTime);
+    lv_label_set_text(ui_AODTime, "--:--");
+    lv_obj_set_style_text_color(ui_AODTime, lv_color_hex(0x404040), 0); // Dim gray
+    lv_obj_set_style_text_font(ui_AODTime, &lv_font_montserrat_48, 0);
+    
+    // Wake up on touch
+    lv_obj_add_event_cb(ui_AODScreen, [](lv_event_t * e) {
+        lv_scr_load_anim(ui_Screen1, LV_SCR_LOAD_ANIM_FADE_ON, 100, 0, false);
+        g_last_touch_time = esp_timer_get_time();
+    }, LV_EVENT_CLICKED, NULL);
+}
 static bool s_wifi_connected = false;
 static bool s_wifi_init_done = false;
 
@@ -358,7 +375,8 @@ bool isPressed = false;
 
 #endif
 
-#define EXAMPLE_LVGL_BUF_HEIGHT (EXAMPLE_LCD_V_RES / 10) 
+#define EXAMPLE_LVGL_BUF_HEIGHT (EXAMPLE_LCD_V_RES / 20) // Reduced to save internal RAM for WiFi
+ 
 #define EXAMPLE_LVGL_TICK_PERIOD_MS 10 
 #define EXAMPLE_LVGL_TASK_MAX_DELAY_MS 500
 #define EXAMPLE_LVGL_TASK_MIN_DELAY_MS 1
@@ -415,7 +433,9 @@ static bool screen_is_on = true;
 
 void reset_screen_timer()
 {
-    last_touch_time = esp_timer_get_time() / 1000;
+    g_last_touch_time = esp_timer_get_time(); // Update global touch time
+    last_touch_time = esp_timer_get_time() / 1000; // Keep local for screen_is_on logic
+
     if (!screen_is_on)
     {
         screen_is_on = true;
@@ -429,6 +449,27 @@ void reset_screen_timer()
         gpio_set_level((gpio_num_t)EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_ON_LEVEL);
 #endif
         ESP_LOGI("PWR", "Screen WAKE");
+        
+        // Restore brightness on wake
+        uint8_t brightness = 0xFF; 
+        esp_lcd_panel_io_tx_param(io_handle, 0x51, &brightness, 1);
+        
+        if (lv_scr_act() == ui_AODScreen) {
+            lv_scr_load_anim(ui_Screen1, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+        }
+    }
+
+    // AOD logic
+    uint64_t now = esp_timer_get_time();
+    if (g_is_aod_mode && (now - g_last_touch_time > (uint64_t)SCREEN_TIMEOUT_MS * 1000)) {
+        if (lv_scr_act() != ui_AODScreen) {
+            if (ui_AODScreen == NULL) create_aod_screen();
+            lv_scr_load_anim(ui_AODScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+        }
+    } else {
+        if (lv_scr_act() == ui_AODScreen) {
+            lv_scr_load_anim(ui_Screen1, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, false);
+        }
     }
 }
 
@@ -741,18 +782,23 @@ void spp_write_cb(uint8_t *data, uint16_t len)
             g_stillness_duration_ms = item->valueint;
 
         item = cJSON_GetObjectItem(root, "wifi_en");
-        if (item) g_wifi_enabled = cJSON_IsTrue(item);
-        
-        item = cJSON_GetObjectItem(root, "en_sms");
-        if (item) g_w_enable_sms = cJSON_IsTrue(item);
-        
-        item = cJSON_GetObjectItem(root, "en_call");
-        if (item) g_w_enable_call = cJSON_IsTrue(item);
-        
-        item = cJSON_GetObjectItem(root, "en_sos");
-        if (item) g_w_enable_sos = cJSON_IsTrue(item);
-        
-        item = cJSON_GetObjectItem(root, "act_orig");
+        if (!item) item = cJSON_GetObjectItem(root, "en_wifi");
+        if (item) g_wifi_enabled = cJSON_IsTrue(item) || (item->type == cJSON_Number && item->valueint != 0);
+
+        item = cJSON_GetObjectItem(root, "sms_en");
+        if (!item) item = cJSON_GetObjectItem(root, "en_sms");
+        if (item) g_w_enable_sms = cJSON_IsTrue(item) || (item->type == cJSON_Number && item->valueint != 0);
+
+        item = cJSON_GetObjectItem(root, "call_en");
+        if (!item) item = cJSON_GetObjectItem(root, "en_call");
+        if (item) g_w_enable_call = cJSON_IsTrue(item) || (item->type == cJSON_Number && item->valueint != 0);
+
+        item = cJSON_GetObjectItem(root, "sos_en");
+        if (!item) item = cJSON_GetObjectItem(root, "en_sos");
+        if (item) g_w_enable_sos = cJSON_IsTrue(item) || (item->type == cJSON_Number && item->valueint != 0);
+
+        item = cJSON_GetObjectItem(root, "origin");
+        if (!item) item = cJSON_GetObjectItem(root, "act_orig");
         if (item) g_action_origin = item->valueint;
         
         item = cJSON_GetObjectItem(root, "wifi_ssid");
@@ -822,7 +868,7 @@ void spp_write_cb(uint8_t *data, uint16_t len)
 void wifi_init_sta(void); 
 
 extern "C" void wifi_reconnect_now() {
-    g_wifi_enabled = 1;
+    ESP_LOGI("WIFI", "Manual reconnect requested via settings...");
     if (!s_wifi_init_done) {
         wifi_init_sta();
     } else {
@@ -1130,10 +1176,11 @@ extern "C" void app_main(void)
     lv_init();
     // alloc draw buffers used by LVGL
     // it's recommended to choose the size of the draw buffer(s) to be at least 1/10 screen sized
-    // Memory optimization: move LVGL draw buffers to SPIRAM to free up internal RAM for WiFi/BLE
-    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
+    // Use MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL for standard SPI DMA support on S3
+    // Note: buffers reduced in height (to 1/20) to save internal RAM for WiFi/BLE
+    lv_color_t *buf1 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
     assert(buf1);
-    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_SPIRAM));
+    lv_color_t *buf2 = static_cast<lv_color_t *>(heap_caps_malloc(EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT * sizeof(lv_color_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
     assert(buf2);
     // initialize LVGL draw buffers
     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LVGL_BUF_HEIGHT);
@@ -1643,6 +1690,7 @@ void read_sensor_data(void *arg)
                     char clock_str[10];
                     snprintf(clock_str, sizeof(clock_str), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
                     if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
+                    if (ui_AODTime) lv_label_set_text(ui_AODTime, clock_str);
                 }
 
                 // 3. Check Screen Timeout
@@ -1650,16 +1698,21 @@ void read_sensor_data(void *arg)
                 if (screen_is_on && (now_ms - last_touch_time > SCREEN_TIMEOUT_MS))
                 {
                     screen_is_on = false;
-                    ESP_LOGI("PWR", "Screen TIMEOUT");
-                    // Turn off LCD (Sleep)
-                    if (panel_handle)
-                    {
-                        esp_lcd_panel_disp_on_off(panel_handle, false);
-                    }
-
+                    ESP_LOGI("PWR", "Screen TIMEOUT -> Entering AOD");
+                    
+                    if (g_is_aod_mode) {
+                        if (ui_AODScreen == NULL) create_aod_screen();
+                        lv_scr_load_anim(ui_AODScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+                        
+                        // Dim brightness for AOD
+                        uint8_t brightness = 0x10; 
+                        esp_lcd_panel_io_tx_param(io_handle, 0x51, &brightness, 1);
+                    } else {
+                        if (panel_handle) esp_lcd_panel_disp_on_off(panel_handle, false);
 #if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-                    gpio_set_level((gpio_num_t)EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL);
+                        gpio_set_level((gpio_num_t)EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL);
 #endif
+                    }
                 }
             }
 
