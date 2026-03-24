@@ -1,16 +1,19 @@
-# Build artifacts
+# ESP-IDF specific
 build/
+sdkconfig
+sdkconfig.old
+managed_components/
 
-# IDE
+# IDEs
 .vscode/
 .idea/
+.clangd/
+.cache/
 
-# Configuration
-sdkconfig.old
-
-# OS
+# OS specific
 .DS_Store
 Thumbs.db
 
-# Cache
-.cache/
+# Logovi
+build_log.txt
+build_log_utf8.txt
