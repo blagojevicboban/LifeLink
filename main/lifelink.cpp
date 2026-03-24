@@ -196,51 +196,28 @@ void parse_nmea(char *line)
                 if (status == 'A')
                 {
                     float lat = nmea_to_decimal(raw_lat);
-                    if (ns == 'S')
-                        lat = -lat;
+                    if (ns == 'S') lat = -lat;
                     float lon = nmea_to_decimal(raw_lon);
-                    if (ew == 'W')
-                        lon = -lon;
+                    if (ew == 'W') lon = -lon;
 
                     g_latitude = lat;
                     g_longitude = lon;
-                    ESP_LOGI("GPS_PARSED", "Lat: %.5f, Lon: %.5f", g_latitude, g_longitude);
+                    ESP_LOGI("GPS", "Fix Status: ACTIVE | Lat: %.5f, Lon: %.5f", g_latitude, g_longitude);
 
-                        // Update GPS Status Logic (Green)
                     if (example_lvgl_lock(-1))
                     {
-                        if (ui_LabelGPS) {
-                            lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
-                        }
-                        if (ui_LabelGPS_Icon) {
-                            lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0x00FF00), LV_PART_MAIN); // GPS Icon
-                        }
-
-                        // Update Time (Time format: HHMMSS.XX)
-                        // time[0-1]=HH, time[2-3]=MM
-                        /*
-                        char clock_str[6];
-                        if (strlen(time) >= 4)
-                        {
-                            snprintf(clock_str, sizeof(clock_str), "%c%c:%c%c", time[0], time[1], time[2], time[3]);
-                            if (ui_LabelTime)
-                                lv_label_set_text(ui_LabelTime, clock_str);
-                        }
-                        */
+                        if (ui_LabelGPS) lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0x00FF00), LV_PART_MAIN);
+                        if (ui_LabelGPS_Icon) lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0x00FF00), LV_PART_MAIN);
                         example_lvgl_unlock();
                     }
                 }
                 else
                 {
-                    // Update GPS Status Logic (Red - No Fix)
+                    ESP_LOGW("GPS", "Fix Status: VOID (No fix yet). Searching...");
                     if (example_lvgl_lock(-1))
                     {
-                        if (ui_LabelGPS) {
-                            lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
-                        }
-                        if (ui_LabelGPS_Icon) {
-                            lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN); // GPS Icon
-                        }
+                        if (ui_LabelGPS) lv_obj_set_style_text_color(ui_LabelGPS, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                        if (ui_LabelGPS_Icon) lv_obj_set_style_text_color(ui_LabelGPS_Icon, lv_color_hex(0xFF0000), LV_PART_MAIN);
                         example_lvgl_unlock();
                     }
                 }
@@ -1865,18 +1842,26 @@ void gps_task(void *arg)
             // buffer[read_len] = 0;
             // ESP_LOGI("GPS_NMEA", "%s", (char *)buffer);
         }
+        else if (ret != ESP_OK)
+        {
+            static uint32_t last_gps_err = 0;
+            if (esp_timer_get_time() / 1000 - last_gps_err > 5000) {
+                ESP_LOGW("GPS", "I2C Comm Fail or Busy: %s", esp_err_to_name(ret));
+                last_gps_err = esp_timer_get_time() / 1000;
+            }
+        }
 
         // Poll every 0.1s (GPS usually updates at 1Hz or 10Hz)
         vTaskDelay(pdMS_TO_TICKS(100));
 
-        // --- DEMO MODE FALLBACK ---
-        // If no GPS fix after startup (e.g., indoor), use Mock Location for App testing
-        // Mock Location: Belgrade (44.7866, 20.4489)
+        // --- DEMO MODE FALLBACK (Disabled for real testing) ---
+        /*
         if (g_latitude == 0.0f && g_longitude == 0.0f)
         {
             g_latitude = 44.7866f;
             g_longitude = 20.4489f;
         }
+        */
     }
 
     free(buffer);
