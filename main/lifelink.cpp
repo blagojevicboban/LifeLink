@@ -662,13 +662,13 @@ void load_settings()
 
         uint32_t val;
         if (nvs_get_u32(my_handle, "fall_low", &val) == ESP_OK)
-            g_fall_threshold_low = *(float *)&val;
+            memcpy(&g_fall_threshold_low, &val, sizeof(float));
         if (nvs_get_u32(my_handle, "fall_high", &val) == ESP_OK)
-            g_fall_threshold_high = *(float *)&val;
+            memcpy(&g_fall_threshold_high, &val, sizeof(float));
         if (nvs_get_u32(my_handle, "still_tol", &val) == ESP_OK)
-            g_stillness_tolerance = *(float *)&val;
+            memcpy(&g_stillness_tolerance, &val, sizeof(float));
         if (nvs_get_u32(my_handle, "angle_thr", &val) == ESP_OK)
-            g_angle_threshold_deg = *(float *)&val;
+            memcpy(&g_angle_threshold_deg, &val, sizeof(float));
         nvs_get_i32(my_handle, "still_dur", (int32_t *)&g_stillness_duration_ms);
 
         size_t sz = sizeof(g_wifi_ssid);
@@ -703,13 +703,13 @@ extern "C" void save_settings()
         nvs_set_i32(my_handle, "screen_timeout", g_screen_timeout_ms);
 
         uint32_t val;
-        val = *(uint32_t *)&g_fall_threshold_low;
+        memcpy(&val, &g_fall_threshold_low, sizeof(float));
         nvs_set_u32(my_handle, "fall_low", val);
-        val = *(uint32_t *)&g_fall_threshold_high;
+        memcpy(&val, &g_fall_threshold_high, sizeof(float));
         nvs_set_u32(my_handle, "fall_high", val);
-        val = *(uint32_t *)&g_stillness_tolerance;
+        memcpy(&val, &g_stillness_tolerance, sizeof(float));
         nvs_set_u32(my_handle, "still_tol", val);
-        val = *(uint32_t *)&g_angle_threshold_deg;
+        memcpy(&val, &g_angle_threshold_deg, sizeof(float));
         nvs_set_u32(my_handle, "angle_thr", val);
         nvs_set_i32(my_handle, "still_dur", g_stillness_duration_ms);
 
@@ -731,7 +731,7 @@ extern "C" void save_settings()
     }
 }
 
-void spp_read_cb(uint8_t **data, uint16_t *len)
+extern "C" void spp_read_cb(uint8_t **data, uint16_t *len)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "screen_timeout", g_screen_timeout_ms);
@@ -760,7 +760,7 @@ void spp_read_cb(uint8_t **data, uint16_t *len)
     cJSON_Delete(root);
 }
 
-void spp_write_cb(uint8_t *data, uint16_t len)
+extern "C" void spp_write_cb(uint8_t *data, uint16_t len)
 {
     ESP_LOGI("SETTINGS", "Received write: %.*s", len, data);
     cJSON *root = cJSON_Parse((char *)data);
@@ -973,11 +973,10 @@ esp_err_t send_to_firestore(const char* path, const char* post_data) {
     // NOTE: User must replace YOUR_PROJECT_ID
     snprintf(url, sizeof(url), "https://firestore.googleapis.com/v1/projects/YOUR_PROJECT_ID/databases/(default)/documents/%s", path);
 
-    esp_http_client_config_t config = {
-        .url = url,
-        .method = HTTP_METHOD_POST,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-    };
+    esp_http_client_config_t config = {};
+    config.url = url;
+    config.method = HTTP_METHOD_POST;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
@@ -1056,6 +1055,21 @@ extern "C" void toggle_wifi(bool enable) {
     } else {
         ESP_LOGI("WIFI", "WiFi Disabled via UI");
         esp_wifi_disconnect();
+    }
+}
+
+extern "C" void trigger_sos_alarm(void) {
+    ESP_LOGE("ALARM", "!!! TRIGGERING SOS ALARM !!!");
+    
+    // 1. Notify Mobile App via BLE
+    char ble_msg[64];
+    snprintf(ble_msg, sizeof(ble_msg), "SOS_ALARM Lat:%.5f Lon:%.5f", g_latitude, g_longitude);
+    ble_spp_server_send_data((uint8_t *)ble_msg, strlen(ble_msg));
+
+    // 2. Trigger GSM SMS alert if enabled
+    if (g_w_enable_sos && strlen(g_w_sos_number) > 0) {
+       ESP_LOGI("ALARM", "Sending SMS to SOS number: %s", g_w_sos_number);
+       // gsm_send_sms(g_w_sos_number, "LifeLink ALERT: PAD DETEKTOVAN! Lokacija: https://maps.google.com/?q=%.5f,%.5f", g_latitude, g_longitude);
     }
 }
 

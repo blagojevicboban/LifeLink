@@ -2,8 +2,6 @@
 // Custom numpad for entering SMS alert phone number on 466x466 round AMOLED
 
 #include "../ui.h"
-#include "esp_log.h"
-#include "gsm_a6.h"
 #include "ui_Screen5.h"
 #include <string.h>
 
@@ -19,7 +17,9 @@ char g_phone_number[20] = "";
 extern bool g_w_enable_sms;
 extern bool g_w_enable_call;
 extern bool g_w_enable_sos;
+extern bool g_wifi_enabled;
 extern void save_settings();
+void toggle_wifi(bool enable);
 
 static void toggle_sms_cb(lv_event_t *e) {
     g_w_enable_sms = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -33,9 +33,11 @@ static void toggle_sos_cb(lv_event_t *e) {
     g_w_enable_sos = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
     save_settings();
 }
+
 static void edit_sms_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SMS); }
 static void edit_call_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_CALL); }
 static void edit_sos_cb(lv_event_t *e) { ui_open_numpad(EDIT_MODE_SOS); }
+
 extern void ui_Screen6_screen_init(void);
 static void edit_wifi_cb(lv_event_t *e) {
     _ui_screen_change(&ui_Screen6, LV_SCR_LOAD_ANIM_MOVE_LEFT, 500, 0, &ui_Screen6_screen_init);
@@ -74,8 +76,6 @@ static lv_obj_t *create_row(lv_obj_t *parent, const char *label, int y, lv_event
     return row;
 }
 
-// The test_sms_btn_cb has been removed since the button is no longer needed
-
 // --- Gesture navigation ---
 void ui_event_Screen3(lv_event_t *e)
 {
@@ -108,7 +108,7 @@ void ui_Screen3_screen_init(void)
 
     int sy = 90, gap = 55;
     create_row(ui_Screen3, "BLE", sy, ui_event_SwitchBLE, NULL, true);
-    create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, edit_wifi_cb, true);
+    create_row(ui_Screen3, "WiFi", sy + gap, ui_event_SwitchWiFi, edit_wifi_cb, g_wifi_enabled);
     create_row(ui_Screen3, "SMS", sy + 2*gap, toggle_sms_cb, edit_sms_cb, g_w_enable_sms);
     create_row(ui_Screen3, "Poziv", sy + 3*gap, toggle_call_cb, edit_call_cb, g_w_enable_call);
     create_row(ui_Screen3, "SOS", sy + 4*gap, toggle_sos_cb, edit_sos_cb, g_w_enable_sos);

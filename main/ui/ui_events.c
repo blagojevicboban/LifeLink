@@ -28,3 +28,20 @@ void ui_event_SwitchWiFi(lv_event_t *e)
         toggle_wifi(state);
     }
 }
+
+void start_fall_countdown_ui(bool is_simulated)
+{
+    ESP_LOGW("UI", "Starting fall countdown UI (Simulated: %d)", is_simulated);
+    // Switch to Screen 4 (Alert Screen)
+    if (ui_Screen4) {
+        _ui_screen_change(&ui_Screen4, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_Screen4_screen_init);
+    }
+}
+
+void btn_simulate_fall_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    {
+        start_fall_countdown_ui(true);
+    }
+}
