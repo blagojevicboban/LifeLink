@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 static const char *TAG = "GSM_A6";
 #define UART_BUF_SIZE (1024)
@@ -113,6 +114,8 @@ esp_err_t gsm_a6_init(void)
                     ESP_LOGI(TAG, "Configuring GSM Module for Network Access...");
                     gsm_send_at_cmd("AT+CFUN=1\r\n", "OK", 5000); // Full functionality
                     gsm_send_at_cmd("AT+CMEE=2\r\n", "OK", 1500); // Verbose error reporting
+                    gsm_send_at_cmd("AT+CLTS=1\r\n", "OK", 1500); // Get local timestamp
+                    gsm_send_at_cmd("AT+CTZU=1\r\n", "OK", 1500); // Automatic time zone update
 
                     // Try manual registration to mt:s (MCC=220, MNC=03)
                     // If this fails, 2G might be unavailable for this SIM/operator
@@ -382,4 +385,57 @@ esp_err_t gsm_hang_up(void)
 {
     ESP_LOGI(TAG, "Hanging up call...");
     return gsm_send_at_cmd("ATH\r\n", "OK", 5000);
+}
+
+esp_err_t gsm_get_network_time(struct tm *timeinfo)
+{
+    if (timeinfo == NULL) return ESP_FAIL;
+
+    uart_flush_input(GSM_UART_NUM);
+    uart_write_bytes(GSM_UART_NUM, "AT+CCLK?\r\n", 10);
+
+    uint8_t data[UART_BUF_SIZE];
+    char rx_buffer[UART_BUF_SIZE] = {0};
+    uint32_t elapsed_time = 0;
+    const uint32_t timeout_ms = 3000;
+
+    while (elapsed_time < timeout_ms)
+    {
+        int length = uart_read_bytes(GSM_UART_NUM, data, sizeof(data) - 1, pdMS_TO_TICKS(100));
+        if (length > 0)
+        {
+            data[length] = '\0';
+            strncat(rx_buffer, (char *)data, sizeof(rx_buffer) - strlen(rx_buffer) - 1);
+
+            if (strstr(rx_buffer, "OK") != NULL)
+            {
+                // Format: +CCLK: "yy/mm/dd,hh:mm:ss+zz"
+                char *p = strstr(rx_buffer, "+CCLK: \"");
+                if (p)
+                {
+                    int year, month, day, hour, min, sec, tz;
+                    if (sscanf(p + 8, "%d/%d/%d,%d:%d:%d%d", &year, &month, &day, &hour, &min, &sec, &tz) >= 6)
+                    {
+                        timeinfo->tm_year = year + 2000 - 1900;
+                        timeinfo->tm_mon = month - 1;
+                        timeinfo->tm_mday = day;
+                        timeinfo->tm_hour = hour;
+                        timeinfo->tm_min = min;
+                        timeinfo->tm_sec = sec;
+                        timeinfo->tm_isdst = -1; // Unknown DST
+                        
+                        ESP_LOGI(TAG, "Network Time: %02d/%02d/%02d %02d:%02d:%02d (TZ:%d)", 
+                                 day, month, year, hour, min, sec, tz);
+                        return ESP_OK;
+                    }
+                }
+                break;
+            }
+            if (strstr(rx_buffer, "ERROR") != NULL) break;
+        }
+        elapsed_time += 100;
+    }
+
+    ESP_LOGW(TAG, "Failed to get network time. RX: %s", rx_buffer);
+    return ESP_FAIL;
 }

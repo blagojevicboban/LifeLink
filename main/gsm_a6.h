@@ -8,6 +8,7 @@ extern "C"
 
 #include "driver/uart.h"
 #include "esp_err.h"
+#include <time.h>
 
 // Define the GPIO pins. We will use UART1 for the GSM to avoid UART0 console conflict completely,
 // but map the pins to the ones the user specified on the board (RXD/TXD silkscreen usually maps to GPIO43/44, but let's provide macros in case they mean actual UART0 pins).
@@ -66,6 +67,13 @@ extern "C"
      * @return ESP_OK on success, ESP_FAIL on failure.
      */
     esp_err_t gsm_hang_up(void);
+
+    /**
+     * @brief Get the current time from the cellular network (NITZ).
+     * @param timeinfo Pointer to a struct tm to fill with the time data.
+     * @return ESP_OK on success, ESP_FAIL on failure.
+     */
+    esp_err_t gsm_get_network_time(struct tm *timeinfo);
 
 #ifdef __cplusplus
 }

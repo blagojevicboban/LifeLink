@@ -20,6 +20,7 @@ LifeLink je napredni prototip pametnog sata izgrađen na **ESP32-S3** platformi.
   - Otkucaje srca u realnom vremenu u trenutku pada.
   - Informaciju o tipu pada (stvaran ili simuliran).
 - **WiFi Sinhronizacija sa Cloud-om**: Direktno povezivanje na WiFi i slanje zdravstvenih snapshot-ova i GPS koordinata u Firestore bazu svakih 30 sekundi radi daljinskog praćenja.
+- **Automatska Sinhronizacija Vremena (GSM/NITZ)**: Sat automatski preuzima tačno lokalno vreme od operatera mobilne mreže čim se registruje, eliminišući potrebu za ručnim podešavanjem sata ili internet konekcijom.
 - **Always-On Display (AOD)**: Štedljivi režim rada koji prikazuje vreme na zatamnjenoj crnoj pozadini kada je sat u stanju mirovanja, produžavajući trajanje baterije.
 - **NMEA GPS Podrška**: Integrisano čitanje NMEA protokola sa eksternih GPS modula za precizno praćenje lokacije.
 

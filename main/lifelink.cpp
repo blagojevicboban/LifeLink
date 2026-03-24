@@ -1887,6 +1887,8 @@ void gsm_status_task(void *arg)
     ESP_LOGI("GSM_TASK", "Starting GSM Status Task");
     int consecutive_failures = 0;
     const int MAX_FAILURES_BEFORE_REINIT = 3;
+    static bool s_time_synced = false;
+    static uint32_t s_last_sync_tick = 0;
 
     while (1)
     {
@@ -1896,6 +1898,23 @@ void gsm_status_task(void *arg)
         if (ret == ESP_OK)
         {
             consecutive_failures = 0; // Reset on success
+
+            // Sync time on first registration or every hour (3600000 ms)
+            uint32_t now_tick = pdTICKS_TO_MS(xTaskGetTickCount());
+            if (!s_time_synced || (now_tick - s_last_sync_tick > 3600000))
+            {
+                struct tm net_time;
+                if (gsm_get_network_time(&net_time) == ESP_OK)
+                {
+                    struct timeval tv;
+                    tv.tv_sec = mktime(&net_time);
+                    tv.tv_usec = 0;
+                    settimeofday(&tv, NULL);
+                    s_time_synced = true;
+                    s_last_sync_tick = now_tick;
+                    ESP_LOGI("GSM_TASK", "System time synchronized with GSM network");
+                }
+            }
         }
         else
         {

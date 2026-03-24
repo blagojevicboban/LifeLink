@@ -27,6 +27,16 @@ Detekcija padova (Fall Detection) podeljena je na 3 state-machine faze koje igno
 2. `IMPACT_DETECTED` : Nakon što G prevaziđe definisan threshold (> 3.5G MAX). Ako ne, State Machine se resetuje `500ms` bez reakcija.
 3. `STILLNESS & ANGLE CHECK` (Verifikaciji Mirnoće): Padanje se mora završiti sa `STILLNESS` uslovom u trajanju od barem 5 sekundi a potom sledi kalkulisanje kosinusa (Dot-Product ugla) prvobitnog vektora sa sadašnjim iznosom `ref_ax`, `ref_ay`. Sat zahteva da se promena ugla desi preko **60 stepeni**.
 
+## Sinhronizacija Vremena (NITZ preko GSM)
+
+LifeLink automatski sinhronizuje svoj unutrašnji sat sa mrežom operatera putem GSM modula. Ovo omogućava da sat uvek prikazuje tačno lokalno vreme bez potrebe za internetom (WiFi) ili GPS fiksom.
+
+**Tehnički detalji:**
+- **Protokol:** NITZ (Network Identity and Time Zone).
+- **Implementacija:** Prilikom inicijalizacije šalju se komande `AT+CLTS=1` i `AT+CTZU=1`. Vreme se periodično čita komandom `AT+CCLK?`.
+- **Sistemski sat:** Parsirane vrednosti (godina, mesec, dan, sat, minut, sekunda) se upisuju u unutrašnji sat ESP32 kontrolera pomoću `settimeofday` standardne C funkcije.
+- **Učestalost:** Sinhronizacija se vrši odmah nakon prve uspešne registracije na mrežu i ponavlja se svakih sat vremena.
+
 
 ## Komunikacija i SOS Prijavljivanje (SIM800L GSM & GPS LC76G)
 
