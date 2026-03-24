@@ -11,8 +11,7 @@ void ui_init(void) {
     ui_Screen1_screen_init();
     ui_Screen2_screen_init();
     ui_Screen3_screen_init();
-    ui_Screen4_screen_init();
-    // ui_Screen5 is initialized lazily from ui_open_numpad
+    // ui_Screen4 and ui_Screen5 are initialized lazily when needed
     
     ui____initial_actions0 = lv_obj_create(NULL);
     lv_scr_load(ui_Screen1);

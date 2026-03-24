@@ -240,7 +240,11 @@ esp_err_t gsm_check_network(void)
             {
                 if (strstr(rx_buffer, ",1") != NULL || strstr(rx_buffer, ",5") != NULL)
                 {
-                    ESP_LOGI(TAG, "Network registration successful! (Status: %s)", rx_buffer);
+                    static bool last_reg_status = false;
+                    if (!last_reg_status) {
+                        ESP_LOGI(TAG, "Network registration successful! (Status: %s)", rx_buffer);
+                        last_reg_status = true;
+                    }
                     return ESP_OK;
                 }
                 else
