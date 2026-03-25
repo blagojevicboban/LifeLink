@@ -1,6 +1,6 @@
 #include "max30102.h"
 #include "esp_log.h"
-#include <cstring>
+#include <string.h>
 
 static const char *TAG = "MAX30102";
 
@@ -198,9 +198,47 @@ void MAX30102::check()
         if (numSamples < 0)
             numSamples += 32;
 
-        for (int i = 0; i < numSamples; i++)
+        if (numSamples > 0)
         {
-            readFIFO();
+            // Read all samples in one burst (6 bytes per sample)
+            int bytesToRead = numSamples * 6;
+            uint8_t* data = (uint8_t*)malloc(bytesToRead);
+            if (!data) return;
+
+            i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+            i2c_master_start(cmd);
+            i2c_master_write_byte(cmd, (_i2cAddr << 1) | I2C_MASTER_WRITE, true);
+            i2c_master_write_byte(cmd, MAX30102_FIFO_DATA, true);
+            i2c_master_start(cmd);
+            i2c_master_write_byte(cmd, (_i2cAddr << 1) | I2C_MASTER_READ, true);
+            i2c_master_read(cmd, data, bytesToRead, I2C_MASTER_LAST_NACK);
+            i2c_master_stop(cmd);
+
+            esp_err_t ret = i2c_master_cmd_begin(_i2cPort, cmd, pdMS_TO_TICKS(100));
+            i2c_cmd_link_delete(cmd);
+
+            if (ret == ESP_OK)
+            {
+                for (int i = 0; i < numSamples; i++)
+                {
+                    uint32_t un_temp;
+                    int base = i * 6;
+                    
+                    // Red
+                    un_temp = (uint32_t)data[base + 0] << 16 | (uint32_t)data[base + 1] << 8 | (uint32_t)data[base + 2];
+                    un_temp &= 0x03FFFF;
+                    redBuffer[head] = un_temp;
+
+                    // IR
+                    un_temp = (uint32_t)data[base + 3] << 16 | (uint32_t)data[base + 4] << 8 | (uint32_t)data[base + 5];
+                    un_temp &= 0x03FFFF;
+                    irBuffer[head] = un_temp;
+
+                    head++;
+                    head %= STORAGE_SIZE;
+                }
+            }
+            free(data);
         }
     }
 }

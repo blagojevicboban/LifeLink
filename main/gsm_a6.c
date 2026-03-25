@@ -8,6 +8,7 @@
 #include <time.h>
 
 static const char *TAG = "GSM_A6";
+static int s_last_reg_status = -1; // -1 = unknown, 0..5 = CREG status
 #define UART_BUF_SIZE (1024)
 
 static esp_err_t gsm_power_on(void)
@@ -238,40 +239,58 @@ esp_err_t gsm_check_network(void)
 
             if (strstr(rx_buffer, "OK") != NULL)
             {
-                if (strstr(rx_buffer, ",1") != NULL || strstr(rx_buffer, ",5") != NULL)
+                // Parse the status digit: +CREG: n,stat
+                int n_val = -1, stat_val = -1;
+                char *creg_ptr = strstr(rx_buffer, "+CREG:");
+                if (creg_ptr) {
+                    if (sscanf(creg_ptr, "+CREG: %d,%d", &n_val, &stat_val) != 2) {
+                        // try alternative format n omitted
+                        sscanf(creg_ptr, "+CREG: %d", &stat_val);
+                    }
+                }
+
+                if (stat_val == 1 || stat_val == 5)
                 {
-                    static bool last_reg_status = false;
-                    if (!last_reg_status) {
-                        ESP_LOGI(TAG, "Network registration successful! (Status: %s)", rx_buffer);
-                        last_reg_status = true;
+                    if (s_last_reg_status != stat_val) {
+                        ESP_LOGI(TAG, "Network registration successful! (Status: %d - %s)", stat_val, (stat_val == 1 ? "Home" : "Roaming"));
+                        s_last_reg_status = stat_val;
                     }
                     return ESP_OK;
                 }
                 else
                 {
-                    // Detect specific failure states
-                    bool gave_up = (strstr(rx_buffer, ",0") != NULL); // Not searching
-                    bool denied = (strstr(rx_buffer, ",3") != NULL);  // Registration denied
+                    // Update status if it's NOT searching (,2) to avoid flip-flopping logs
+                    if (stat_val != 2 && s_last_reg_status != stat_val) {
+                         s_last_reg_status = stat_val;
+                         if (stat_val == 0) ESP_LOGW(TAG, "Network not registered, not searching.");
+                         else if (stat_val == 3) ESP_LOGE(TAG, "Network registration DENIED.");
+                    }
+
+                    // For backward compatibility with the recovery logic below
+                    bool gave_up = (stat_val == 0);
+                    bool denied = (stat_val == 3);
 
                     if (gave_up)
                     {
                         ESP_LOGE(TAG, "Module STOPPED searching (CREG ,0). Forcing re-registration...");
                         gsm_update_ui_status("GSM: Re-Reg...");
-                        // Force automatic operator selection to restart search
                         gsm_send_at_cmd("AT+COPS=0\r\n", "OK", 10000);
                     }
                     else if (denied)
                     {
                         ESP_LOGE(TAG, "Network DENIED registration (CREG ,3)!");
                         gsm_update_ui_status("GSM: DENIED");
-                        // Reset radio to retry
                         gsm_send_at_cmd("AT+CFUN=0\r\n", "OK", 5000);
                         vTaskDelay(pdMS_TO_TICKS(2000));
                         gsm_send_at_cmd("AT+CFUN=1\r\n", "OK", 5000);
                     }
+                    else if (stat_val == 2)
+                    {
+                        // Periodically show searching if it persists? No, keep it quiet.
+                    }
                     else
                     {
-                        ESP_LOGW(TAG, "Network not registered yet. CREG status: %s", rx_buffer);
+                        ESP_LOGW(TAG, "Network status: %d", stat_val);
                     }
 
                     // Diagnostics

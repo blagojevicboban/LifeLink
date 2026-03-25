@@ -35,6 +35,7 @@ esp_err_t axp_enable_power(void)
     
     axp_write_byte(0x92, 0x1C); // ALDO1 = 3.3V
     axp_write_byte(0x93, 0x0D); // ALDO2 = 1.8V
+    axp_write_byte(0x94, 0x1C); // ALDO3 = 3.3V (GNSS Rail)
     vTaskDelay(pdMS_TO_TICKS(10));
 
     // --- Enable LDOs ---

@@ -7,96 +7,98 @@
 static const char *TAG = "LC76G";
 static i2c_port_t g_i2c_port = I2C_NUM_0;
 
+/**
+ * @brief Helper to write to TCA9554 port expander
+ */
+static esp_err_t tca9554_write(uint8_t reg, uint8_t val)
+{
+    uint8_t buf[2] = {reg, val};
+    return i2c_master_write_to_device(g_i2c_port, TCA9554_ADDR, buf, sizeof(buf), pdMS_TO_TICKS(100));
+}
+
+/**
+ * @brief Helper to read from TCA9554 port expander
+ */
+static esp_err_t tca9554_read(uint8_t reg, uint8_t *val)
+{
+    return i2c_master_write_read_device(g_i2c_port, TCA9554_ADDR, &reg, 1, val, 1, pdMS_TO_TICKS(100));
+}
+
+esp_err_t lc76g_hw_reset(void)
+{
+    ESP_LOGI(TAG, "Ensuring Power and Peripheral Init (TCA9554 EXIO4, EXIO6 & EXIO7)...");
+    
+    uint8_t config, output;
+    
+    if (tca9554_read(3, &config) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read TCA9554 Config Register!");
+        return ESP_FAIL;
+    }
+    config &= ~(1 << TCA9554_SYS_OUT_PIN); 
+    config &= ~(1 << TCA9554_GPS_EN_PIN);  
+    config &= ~(1 << TCA9554_GPS_RST_PIN); 
+    tca9554_write(3, config);
+    
+    if (tca9554_read(1, &output) != ESP_OK) return ESP_FAIL;
+    output |= (1 << TCA9554_SYS_OUT_PIN); 
+    output |= (1 << TCA9554_GPS_EN_PIN);  
+    output &= ~(1 << TCA9554_GPS_RST_PIN); 
+    tca9554_write(1, output);
+    
+    vTaskDelay(pdMS_TO_TICKS(200)); 
+    
+    output |= (1 << TCA9554_GPS_RST_PIN); 
+    tca9554_write(1, output);
+    
+    ESP_LOGI(TAG, "GPS_RST released. Waiting for module startup...");
+    vTaskDelay(pdMS_TO_TICKS(500)); 
+    
+    return ESP_OK;
+}
+
 esp_err_t lc76g_init(i2c_port_t i2c_num)
 {
     g_i2c_port = i2c_num;
-    ESP_LOGI(TAG, "Initialized LC76G on I2C port %d", i2c_num);
-    // Note: I2C driver is assumed to be initialized by the main app/sensorlib
-    return ESP_OK;
+    ESP_LOGI(TAG, "Initializing LC76G on I2C (H/W Reset)");
+    return lc76g_hw_reset();
 }
 
 esp_err_t lc76g_read_data(uint8_t *buffer, size_t max_len, size_t *read_len)
 {
     *read_len = 0;
-    esp_err_t ret;
+    if (!buffer || max_len == 0) return ESP_ERR_INVALID_ARG;
 
-    // 1. Initial Write to checking availability or trigger
-    // Protocol from Arduino: { 0x08, 0x00, 0x51, 0xAA, 0x04, 0x00, 0x00, 0x00 }
-    uint8_t init_cmd[] = {0x08, 0x00, 0x51, 0xAA, 0x04, 0x00, 0x00, 0x00};
+    // --- PHASE 1: Send Data Length Request ---
+    uint8_t req_len_cmd[] = { 0x08, 0x00, 0x51, 0xAA, 0x04, 0x00, 0x00, 0x00 };
+    esp_err_t ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, req_len_cmd, sizeof(req_len_cmd), pdMS_TO_TICKS(100));
+    if (ret != ESP_OK) return ret;
 
-    ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, init_cmd, sizeof(init_cmd), pdMS_TO_TICKS(100));
-    if (ret != ESP_OK)
-    {
-        // It's possible the device NACKs if busy or sleeping, suppress excessive logs?
-        // ESP_LOGW(TAG, "Failed to write init command: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-    vTaskDelay(pdMS_TO_TICKS(100)); // Arduino uses 100ms
-
-    // 2. Read Data Length (4 bytes) from 0x54
-    // 2. Read Data Length (4 bytes) from 0x54
+    // --- PHASE 2: Read Data Length ---
     uint8_t len_buf[4] = {0};
-    int retries = 3;
-    while (retries > 0)
-    {
-        ret = i2c_master_read_from_device(g_i2c_port, LC76G_ADDR_R, len_buf, sizeof(len_buf), pdMS_TO_TICKS(1000));
-        if (ret == ESP_OK)
-            break;
-
-        // Don't log error immediately, just wait and retry
-        vTaskDelay(pdMS_TO_TICKS(20));
-        retries--;
-    }
-
-    if (ret != ESP_OK)
-    {
-        // Only log error if all retries failed
-        ESP_LOGD(TAG, "Failed to read length: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    ret = i2c_master_read_from_device(g_i2c_port, LC76G_ADDR_R, len_buf, 4, pdMS_TO_TICKS(100));
+    if (ret != ESP_OK) return ret;
 
     uint32_t data_len = (len_buf[0]) | (len_buf[1] << 8) | (len_buf[2] << 16) | (len_buf[3] << 24);
+    if (data_len == 0) return ESP_OK; // No data yet
+    
+    if (data_len > max_len) data_len = max_len;
 
-    if (data_len == 0)
-    {
-        // No data available
-        return ESP_OK;
-    }
+    // --- PHASE 3: Send Confirmation/Ack with length ---
+    uint8_t ack_cmd[8] = { 0x00, 0x20, 0x51, 0xAA };
+    memcpy(&ack_cmd[4], len_buf, 4);
+    
+    vTaskDelay(pdMS_TO_TICKS(20));
+    ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, ack_cmd, sizeof(ack_cmd), pdMS_TO_TICKS(100));
+    if (ret != ESP_OK) return ret;
 
-    if (data_len > max_len)
-    {
-        ESP_LOGD(TAG, "Data length %lu exceeds buffer %u, truncating", data_len, max_len);
-        data_len = max_len;
-    }
+    vTaskDelay(pdMS_TO_TICKS(20));
 
-    // 3. Prepare Read Command
-    // Protocol: { 0x00, 0x20, 0x51, 0xAA } + 4 bytes of length previously read
-    uint8_t read_cmd[8];
-    uint8_t cmd_header[] = {0x00, 0x20, 0x51, 0xAA};
-    memcpy(read_cmd, cmd_header, sizeof(cmd_header));
-    memcpy(read_cmd + 4, len_buf, 4);
-
-    vTaskDelay(pdMS_TO_TICKS(10)); // Wait a bit before requesting data
-
-    ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, read_cmd, sizeof(read_cmd), pdMS_TO_TICKS(100));
-    if (ret != ESP_OK)
-    {
-        ESP_LOGD(TAG, "Failed to send read request: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(10)); // Wait for data preparation
-
-    // 4. Read Actual Data
+    // --- PHASE 4: Read actual NMEA Payload ---
     ret = i2c_master_read_from_device(g_i2c_port, LC76G_ADDR_R, buffer, data_len, pdMS_TO_TICKS(200));
-    if (ret == ESP_OK)
-    {
+    if (ret == ESP_OK) {
         *read_len = data_len;
-    }
-    else
-    {
-        ESP_LOGD(TAG, "Failed to read data payload: %s", esp_err_to_name(ret));
     }
 
     return ret;

@@ -41,15 +41,22 @@ public:
     // Helpers used for the algorithm
     void clearFIFO();
 
+    // Buffer and State Accessors
+    uint32_t* getRedBuffer() { return redBuffer; }
+    uint32_t* getIRBuffer() { return irBuffer; }
+    uint8_t getHead() { return head; }
+    uint8_t getTail() { return tail; }
+
 private:
     i2c_port_t _i2cPort;
     uint8_t _i2cAddr;
 
-// Circular buffer for readings (minimal implementation for now)
-// Circular buffer for readings (increased from 4)
+// Circular buffer for readings
 #define STORAGE_SIZE 64
+public:
     uint32_t redBuffer[STORAGE_SIZE];
     uint32_t irBuffer[STORAGE_SIZE];
+private:
     uint8_t head;
     uint8_t tail;
 

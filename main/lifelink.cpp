@@ -1,5 +1,7 @@
 #include <stdio.h>
-#include <cstring>
+#include <string.h>
+#include <stdlib.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -56,6 +58,8 @@ bool g_w_enable_call = false;
 char g_w_call_numbers[128] = "";
 bool g_w_enable_sos = false;
 char g_w_sos_number[20] = "";
+uint32_t g_sleep_hr_interval_s = 10; 
+uint32_t g_sleep_hr_duration_s = 10;  // 10 seconds default
 int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
 
 bool g_is_aod_mode = true;
@@ -71,10 +75,17 @@ void create_aod_screen() {
     lv_obj_set_style_bg_color(ui_AODScreen, lv_color_hex(0x000000), 0);
     
     ui_AODTime = lv_label_create(ui_AODScreen);
-    lv_obj_center(ui_AODTime);
+    lv_obj_set_width(ui_AODTime, 466); // Full screen width for perfect centering
+    lv_obj_set_style_text_align(ui_AODTime, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(ui_AODTime, "--:--");
     lv_obj_set_style_text_color(ui_AODTime, lv_color_hex(0x404040), 0); // Dim gray
     lv_obj_set_style_text_font(ui_AODTime, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_transform_zoom(ui_AODTime, 768, 0); // 3x size
+    
+    // Zoom symmetrically from the center of the 466px width
+    lv_obj_set_style_transform_pivot_x(ui_AODTime, 233, 0); 
+    lv_obj_set_style_transform_pivot_y(ui_AODTime, 24, 0); 
+    lv_obj_set_align(ui_AODTime, LV_ALIGN_CENTER);
     
     // Wake up on touch
     lv_obj_add_event_cb(ui_AODScreen, [](lv_event_t * e) {
@@ -126,7 +137,7 @@ MAX30102 max30102;
 static const char *TAGA = "QMI8658"; // Define a tag for logging
 
 // I2C configuration consolidated below
-#define I2C_MASTER_FREQ_HZ 400000
+#define I2C_MASTER_FREQ_HZ 100000 // Standard speed for I2C GPS
 #define I2C_MASTER_SDA_IO (gpio_num_t) I2C_MASTER_SDA
 #define I2C_MASTER_SCL_IO (gpio_num_t) I2C_MASTER_SCL
 
@@ -255,10 +266,11 @@ void setup_accel()
     // i2c_master_init(); // Removed: I2C is already initialized by i2c_init() in app_main
 
     // Initialize QMI8658 sensor with 4 parameters (port number, address, SDA, SCL)
+    // Note: SensorLib version in this project uses init() or begin() - check return type
     if (!qmi.begin(I2C_MASTER_NUM, QMI8658_ADDRESS, I2C_MASTER_SDA, I2C_MASTER_SCL))
     {
         ESP_LOGE(TAGA, "Failed to find QMI8658 - check your wiring!");
-        return; // JUST RETURN. DO NOT CALL vTaskDelete(NULL) here!! It kills app_main!!
+        return; 
     }
 
     // Get chip ID
@@ -289,14 +301,19 @@ void setup_max30102()
 {
     if (!max30102.begin(I2C_MASTER_NUM))
     {
-        ESP_LOGE("MAX30102", "MAX30102 not found");
+        ESP_LOGE("MAX30102", "MAX30102 begin() FAILED - Check I2C connections");
     }
     else
     {
-        ESP_LOGI("MAX30102", "MAX30102 initialized. Safe Mode Config...");
+        uint8_t partID = max30102.readRegister8(0xFF);
+        uint8_t revID = max30102.readRegister8(0xFE);
+        ESP_LOGI("MAX30102", "MAX30102 Found. PartID: 0x%02X, RevID: 0x%02X", partID, revID);
+        
+        max30102.writeRegister8(0x09, 0x40); // MODE_CONFIG register, reset bit
+        vTaskDelay(pdMS_TO_TICKS(100));
         max30102.wakeUp();
-        // Power=0x3F (~12.5mA), Avg=4, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
-        max30102.setup(0x3F, 4, 2, 400, 411, 4096); 
+        // Power=0x24 (~7mA), Avg=1, Mode=2(Red+IR), Rate=400Hz, Width=411, Range=4096
+        max30102.setup(0x24, 1, 2, 400, 411, 4096); 
         
         vTaskDelay(pdMS_TO_TICKS(100));
         max30102.clearFIFO();
@@ -394,7 +411,11 @@ esp_err_t i2c_init(void)
     i2c_conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
     i2c_conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
     i2c_param_config(I2C_MASTER_NUM, &i2c_conf);
-    return i2c_driver_install(I2C_MASTER_NUM, i2c_conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+    
+    // Set SCL Hardware Timeout to prevent bus lockups (in APB clock cycles, ~13ms @ 80MHz)
+    i2c_set_timeout(I2C_MASTER_NUM, 0xFFFFF); 
+
+    return i2c_driver_install(I2C_MASTER_NUM, i2c_conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, ESP_INTR_FLAG_IRAM);
 }
 
 void read_sensor_data(void *arg); // Function declaration
@@ -663,8 +684,12 @@ void load_settings()
         if (nvs_get_u8(my_handle, "wifi_en", &b_val) == ESP_OK) g_wifi_enabled = b_val;
         if (nvs_get_u8(my_handle, "en_sms", &b_val) == ESP_OK) g_w_enable_sms = b_val;
         if (nvs_get_u8(my_handle, "en_call", &b_val) == ESP_OK) g_w_enable_call = b_val;
+        nvs_get_u8(my_handle, "en_sos", &b_val);
         if (nvs_get_u8(my_handle, "en_sos", &b_val) == ESP_OK) g_w_enable_sos = b_val;
         nvs_get_i32(my_handle, "act_orig", (int32_t *)&g_action_origin);
+        
+        nvs_get_i32(my_handle, "hr_slp_int", (int32_t *)&g_sleep_hr_interval_s);
+        nvs_get_i32(my_handle, "hr_slp_dur", (int32_t *)&g_sleep_hr_duration_s);
 
         nvs_close(my_handle);
         ESP_LOGI("SETTINGS", "Loaded settings from NVS");
@@ -701,6 +726,8 @@ extern "C" void save_settings()
         nvs_set_u8(my_handle, "en_call", g_w_enable_call);
         nvs_set_u8(my_handle, "en_sos", g_w_enable_sos);
         nvs_set_i32(my_handle, "act_orig", g_action_origin);
+        nvs_set_i32(my_handle, "hr_slp_int", g_sleep_hr_interval_s);
+        nvs_set_i32(my_handle, "hr_slp_dur", g_sleep_hr_duration_s);
 
         nvs_commit(my_handle);
         nvs_close(my_handle);
@@ -728,6 +755,8 @@ extern "C" void spp_read_cb(uint8_t **data, uint16_t *len)
     cJSON_AddStringToObject(root, "sms_nums", g_w_sms_numbers);
     cJSON_AddStringToObject(root, "call_nums", g_w_call_numbers);
     cJSON_AddStringToObject(root, "sos_num", g_w_sos_number);
+    cJSON_AddNumberToObject(root, "hr_sleep_interval", g_sleep_hr_interval_s);
+    cJSON_AddNumberToObject(root, "hr_sleep_duration", g_sleep_hr_duration_s);
 
     char *json_str = cJSON_PrintUnformatted(root);
     *len = strlen(json_str);
@@ -787,6 +816,12 @@ extern "C" void spp_write_cb(uint8_t *data, uint16_t len)
         if (!item) item = cJSON_GetObjectItem(root, "act_orig");
         if (item) g_action_origin = item->valueint;
         
+        item = cJSON_GetObjectItem(root, "hr_sleep_interval");
+        if (item) g_sleep_hr_interval_s = item->valueint;
+
+        item = cJSON_GetObjectItem(root, "hr_sleep_duration");
+        if (item) g_sleep_hr_duration_s = item->valueint;
+
         item = cJSON_GetObjectItem(root, "wifi_ssid");
         if (item && item->valuestring) strncpy(g_wifi_ssid, item->valuestring, sizeof(g_wifi_ssid) - 1);
         
@@ -1014,7 +1049,7 @@ void wifi_upload_task(void *pvParameters) {
             
             char path[128];
             snprintf(path, sizeof(path), "devices/%s/health_snapshots", mac_str);
-            ESP_LOGI("WIFI_TASK", "Uploading health snapshot to Firestore: %s (HR: %ld, SpO2: %ld)", path, heartRate, spo2);
+            ESP_LOGI("WIFI_TASK", "Uploading health snapshot to Firestore: %s (HR: %d, SpO2: %d)", path, (int)heartRate, (int)spo2);
             send_to_firestore(path, post_data);
 
             free(post_data);
@@ -1059,6 +1094,10 @@ extern "C" void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+    
+    // Set Timezone to Serbia (CET/CEST)
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0", 1);
+    tzset();
 
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
@@ -1077,8 +1116,9 @@ extern "C" void app_main(void)
     // This chip at 0x20 controls the AMOLED Power Enable and Reset pins!
     // P2 is LCD_VCC_EN (Needs to be HIGH)
     // P0/P1 are Touch Reset/INT (Needs to be HIGH)
+    // P7 is GPS_RST (Needs to be HIGH for operational)
     uint8_t tca_cfg[] = {0x03, 0x00}; // Reg 0x03 = Configuration (0=All Output)
-    uint8_t tca_val[] = {0x01, 0x27}; // 0x27 = 0010 0111 (Sets P0, P1, P2 and P5 High)
+    uint8_t tca_val[] = {0x01, 0xFF}; // Reg 0x01 = Output Port (0xFF = P0-P7 HIGH)
     i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_cfg, 2, pdMS_TO_TICKS(100));
     i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_val, 2, pdMS_TO_TICKS(100));
     vTaskDelay(pdMS_TO_TICKS(100)); // Wait for VDD to stabilize
@@ -1094,7 +1134,8 @@ extern "C" void app_main(void)
     // Re-enable AXP init
     if (axp_init(I2C_MASTER_NUM) == ESP_OK)
     {
-        ESP_LOGI("PMU", "AXP2101 Initialized");
+        ESP_LOGI("PMU", "AXP2101 Initialized - Enabling power rails...");
+        axp_enable_power(); 
     }
 #endif
 
@@ -1296,7 +1337,7 @@ extern "C" void app_main(void)
         // Setup Sensor & Tasks immediately for responsive UI
         setup_accel();
         xTaskCreate(read_sensor_data, "sensor_read_task", 8192, NULL, 3, NULL);
-        xTaskCreate(gps_task, "gps_task", 4096, NULL, 2, NULL);
+        xTaskCreate(gps_task, "gps_task", 4096, NULL, 2, NULL); 
 
         // --- Power Management Task (or just add to loop if lightweight) ---
         // For simplicity, we can do it in read_sensor_data or a timer.
@@ -1314,47 +1355,51 @@ extern "C" void app_main(void)
     }
 }
 
-// Variables for MAX30102 algorithm
 void read_sensor_data(void *arg)
 {
-    char x_str[20], y_str[20], z_str[20], g_str[20], gx_str[20], gy_str[20], gz_str[20];
-    char info_str[64];
-    float g_total = 1.0f; // Default to 1G if not ready
-    float gyro_total = 0.0f;
-    static int g_batt_pct = 0; // Static to persist for Heartbeat
+    char x_str[20], y_str[20], z_str[20], g_str[20];
+    char info_str[128] = "Monitoring...";
+    float g_total = 1.0f; 
+    static int g_batt_pct = 0; 
     
-    // Globals for external tasks (like wifi upload)
     extern float g_total_snapshot;
     extern int g_batt_pct_snapshot;
 
-    // Initialize labels
-    // snprintf(info_str, sizeof(info_str), "Nadzor (Pot:%d, Pad:%d)", potentialFallCount, fallCount);
-    // lv_label_set_text(ui_LabelInfo, info_str);
-
     int samplesCollected = 0;
-    
-    g_total_snapshot = g_total;
-    g_batt_pct_snapshot = g_batt_pct;
+    static bool s_max30102_sensing = false;
+    uint64_t last_batt_check = 0;
+    uint64_t last_sensor_log = 0;
+    uint64_t last_ui_report = 0;
 
     while (1)
     {
-        // --- PEFORM SENSOR READS (NON-BLOCKING) ---
+        uint64_t now_ms_abs = esp_timer_get_time() / 1000;
 
-        // 1. MAX30102 Polling & Buffering (Only on Screen 1)
-        static bool s_max30102_sensing = false;
+        // 1. MAX30102 logic (Screen-based or Periodic)
         bool on_sensor_screen = false;
         if (example_lvgl_lock(-1)) {
             if (ui_Screen1 && lv_scr_act() == ui_Screen1) on_sensor_screen = true;
             example_lvgl_unlock();
         }
 
-        if (screen_is_on && on_sensor_screen)
+        bool background_hr_due = false;
+        if (!screen_is_on) {
+            uint32_t current_cycle_s = (now_ms_abs / 1000) % g_sleep_hr_interval_s;
+            if (current_cycle_s < (uint32_t)g_sleep_hr_duration_s) background_hr_due = true;
+        }
+
+        bool sensor_active_needed = (screen_is_on && on_sensor_screen) || (fallState != IDLE) || background_hr_due;
+
+        if (sensor_active_needed)
         {
             if (!s_max30102_sensing) {
+                ESP_LOGI("MAX30102", "Waking up for %s sensing...", 
+                         (fallState != IDLE) ? "EMERGENCY" : (background_hr_due ? "BACKGROUND" : "ACTIVE"));
                 max30102.wakeUp();
                 s_max30102_sensing = true;
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
+
             max30102.check();
             static int skipCount = 0;
             while (max30102.available())
@@ -1362,382 +1407,185 @@ void read_sensor_data(void *arg)
                 uint32_t r = max30102.getRed();
                 uint32_t ir = max30102.getIR();
                 
-                if (skipCount % 4 == 0) // Sensor is at 400Hz, we take every 4th sample to get 100Hz for FFT
-                {
-                    if (samplesCollected < TEST_BUFFER_LENGTH)
-                    {
-                        redBuffer[samplesCollected] = r;
-                        irBuffer[samplesCollected] = ir;
-                        samplesCollected++;
-                    }
+                if (skipCount % 4 == 0 && samplesCollected < TEST_BUFFER_LENGTH) {
+                    redBuffer[samplesCollected] = r;
+                    irBuffer[samplesCollected] = ir;
+                    samplesCollected++;
                 }
-                max30102.nextSample(); // Advance pointer always
+                max30102.nextSample();
                 skipCount++;
 
-                // Algorithm: Run every time we fill the buffer (sliding window)
                 if (samplesCollected == TEST_BUFFER_LENGTH)
                 {
-                    // Convert to float for FFT
-                    for (int i = 0; i < TEST_BUFFER_LENGTH; i++)
-                    {
+                    for (int i = 0; i < TEST_BUFFER_LENGTH; i++) {
                         redBufferFloat[i] = (float)redBuffer[i];
                         irBufferFloat[i] = (float)irBuffer[i];
                     }
-
-                    // Run FFT Algorithm (100Hz sampling rate matches our skipped count)
                     fft_process(redBufferFloat, irBufferFloat, TEST_BUFFER_LENGTH, 100, &fft_hr, &fft_spo2);
-
                     heartRate = (int32_t)fft_hr;
                     spo2 = (int32_t)fft_spo2;
                     validHeartRate = (heartRate >= 45 && heartRate <= 220);
                     validSPO2 = (spo2 >= 50 && spo2 <= 100);
 
-                    // Shift buffer left by 50 samples
+                    // Shift buffer (sliding window)
                     int shift = 50;
-                    for (int i = shift; i < TEST_BUFFER_LENGTH; i++)
-                    {
-                        redBuffer[i - shift] = redBuffer[i];
-                        irBuffer[i - shift] = irBuffer[i];
+                    for (int i = shift; i < TEST_BUFFER_LENGTH; i++) {
+                        redBuffer [i - shift] = redBuffer[i];
+                        irBuffer  [i - shift] = irBuffer [i];
                     }
                     samplesCollected = TEST_BUFFER_LENGTH - shift;
                 }
             }
-        }
-        else
-        {
-            if (s_max30102_sensing) {
-                max30102.shutDown();
-                s_max30102_sensing = false;
+
+            if (now_ms_abs - last_sensor_log > 3000) {
+                last_sensor_log = now_ms_abs;
+                ESP_LOGI("MAX30102", "[%s] HR:%d SpO2:%d%% (S:%d)", 
+                         (background_hr_due ? "BG" : (fallState != IDLE ? "EMG" : "ACT")),
+                         (int)heartRate, (int)spo2, samplesCollected);
             }
-            // Reset buffer logic when not on sensor screen to prevent old data
-            samplesCollected = 0;
+        }
+        else if (s_max30102_sensing)
+        {
+            ESP_LOGI("MAX30102", "Sensing window over. Shutting down.");
+            max30102.shutDown();
+            s_max30102_sensing = false;
+            samplesCollected = 0; 
         }
 
-        // 2. QMI8658 Polling
-        bool qmi_updated = false;
-        if (qmi.getDataReady())
-        {
-            if (qmi.getAccelerometer(acc.x, acc.y, acc.z) && qmi.getGyroscope(gyr.x, gyr.y, gyr.z))
-            {
+        // 2. QMI8658
+        bool qmi_ready = false;
+        if (qmi.getDataReady()) {
+            if (qmi.getAccelerometer(acc.x, acc.y, acc.z) && qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
                 g_total = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
                 g_total_snapshot = g_total;
-                gyro_total = sqrt(gyr.x * gyr.x + gyr.y * gyr.y + gyr.z * gyr.z);
-                qmi_updated = true;
+                qmi_ready = true;
             }
         }
 
-        // --- UPDATE UI & LOGIC ---
+        // 3. Power
+        if (now_ms_abs - last_batt_check > 10000) {
+            last_batt_check = now_ms_abs;
+            int pct = axp_get_batt_percent();
+            if (pct >= 0) {
+                g_batt_pct = pct;
+                g_batt_pct_snapshot = g_batt_pct;
+            }
+        }
+
+        // 4. UI & Fall Logic
         if (example_lvgl_lock(-1))
         {
-            // Calculate avg raw value for debugging
-            uint32_t avgRed = 0;
-            uint32_t avgIR = 0;
-            if (bufferLength > 25)
-            {
-                for (int k = bufferLength - 25; k < bufferLength; k++)
-                {
-                    avgRed += redBuffer[k];
-                    avgIR += irBuffer[k];
+            bool update_now = (now_ms_abs - last_ui_report > 200);
+            if (update_now) {
+                last_ui_report = now_ms_abs;
+                if (ui_LabelBatt) {
+                    char batt_str[16];
+                    snprintf(batt_str, sizeof(batt_str), "%d%%", g_batt_pct);
+                    lv_label_set_text(ui_LabelBatt, batt_str);
+                    if (g_batt_pct < 20) lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0xFF0000), LV_PART_MAIN);
+                    else lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
                 }
-                avgRed /= 25;
-                avgIR /= 25;
-            }
+                if (on_sensor_screen) {
+                    char hr_display[16], spo_display[16];
+                    snprintf(hr_display, sizeof(hr_display), "%d", (int)heartRate);
+                    snprintf(spo_display, sizeof(spo_display), "%d%%", (int)spo2);
+                    if (ui_LabelPuls) lv_label_set_text(ui_LabelPuls, hr_display);
+                    if (ui_LabelSpo) lv_label_set_text(ui_LabelSpo, spo_display);
+                }
+                time_t now_time = time(NULL);
+                struct tm *timeinfo = localtime(&now_time);
+                char clock_str[10];
+                snprintf(clock_str, sizeof(clock_str), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
+                if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
+                if (ui_AODTime) lv_label_set_text(ui_AODTime, clock_str);
 
-            // Finger Detection Threshold
-            // With 0x3F power, valid finger signal should be > 30,000.
-            if (avgIR < 20000)
-            {
-                heartRate = 0;
-                spo2 = 0;
-                validHeartRate = 0;
-                validSPO2 = 0;
-            }
-
-            // Always update Pulse/SpO2 if valid
-            char puls_str[16] = "--";
-            char spo_str[16] = "--";
-            if (validHeartRate)
-                snprintf(puls_str, sizeof(puls_str), "%ld", heartRate);
-            if (validSPO2)
-                snprintf(spo_str, sizeof(spo_str), "%ld", spo2);
-
-            // Rate limiting for Log and UI
-            static uint64_t last_report_time = 0;
-            bool report_now = (esp_timer_get_time() / 1000 - last_report_time) > 100;
-
-            if (report_now)
-            {
-                last_report_time = esp_timer_get_time() / 1000;
-
-                // Only update labels if we have a valid reading or strict "--"
-                lv_label_set_text(ui_LabelPuls, puls_str);
-                lv_label_set_text(ui_LabelSpo, spo_str);
-
-                static uint64_t last_sensor_log = 0;
-                if ((esp_timer_get_time() / 1000 - last_sensor_log) > 3000)
-                {
-                    last_sensor_log = esp_timer_get_time() / 1000;
-                    // Log Raw values to debug saturation (Max is ~262143 for 18-bit)
-                    ESP_LOGI("MAX30102", "HR: %ld, SpO2: %ld, Val: %d/%ld, RawRed: %lu, RawIR: %lu",
-                             heartRate, spo2, validHeartRate, validSPO2, avgRed, avgIR);
-
-                    if (qmi_updated) {
-                         ESP_LOGI("QMI8658", "G-Force: %.2f | Gyr: X:%.0f Y:%.0f Z:%.0f", g_total, gyr.x, gyr.y, gyr.z);
-                    } else {
-                         ESP_LOGW("QMI8658", "Waiting for QMI data...");
-                    }
+                bool debug_active = (ui_BtnDebug != NULL) && lv_obj_has_state(ui_BtnDebug, LV_STATE_CHECKED);
+                if (debug_active) {
+                    snprintf(g_str, sizeof(g_str), "%.2f", g_total);
+                    if (ui_LabelG) lv_label_set_text(ui_LabelG, g_str);
+                    snprintf(x_str, sizeof(x_str), "%.2f", acc.x);
+                    snprintf(y_str, sizeof(y_str), "%.2f", acc.y);
+                    snprintf(z_str, sizeof(z_str), "%.2f", acc.z);
+                    if (ui_LabelX) lv_label_set_text(ui_LabelX, x_str);
+                    if (ui_LabelY) lv_label_set_text(ui_LabelY, y_str);
+                    if (ui_LabelZ) lv_label_set_text(ui_LabelZ, z_str);
                 }
             }
 
-            if (qmi_updated)
+            switch (fallState)
             {
-                // UI Updates for Accelerometer (Rate Limited)
-                if (report_now)
-                {
-                    bool debug_active = (ui_BtnDebug != NULL) && lv_obj_has_state(ui_BtnDebug, LV_STATE_CHECKED);
-
-                    if (debug_active)
-                    {
-                        snprintf(g_str, sizeof(g_str), "%.2f", g_total);
-                        // Update Debug Screen (Screen 2)
-                        if (ui_LabelG)
-                            lv_label_set_text(ui_LabelG, g_str);
-
-                        snprintf(x_str, sizeof(x_str), "%.2f", acc.x);
-                        snprintf(y_str, sizeof(y_str), "%.2f", acc.y);
-                        snprintf(z_str, sizeof(z_str), "%.2f", acc.z);
-                        if (ui_LabelX)
-                            lv_label_set_text(ui_LabelX, x_str);
-                        if (ui_LabelY)
-                            lv_label_set_text(ui_LabelY, y_str);
-                        if (ui_LabelZ)
-                            lv_label_set_text(ui_LabelZ, z_str);
-
-                        snprintf(gx_str, sizeof(gx_str), "%.0f", gyr.x);
-                        snprintf(gy_str, sizeof(gy_str), "%.0f", gyr.y);
-                        snprintf(gz_str, sizeof(gz_str), "%.0f", gyr.z);
-                        if (ui_LabelGX)
-                            lv_label_set_text(ui_LabelGX, gx_str);
-                        if (ui_LabelGY)
-                            lv_label_set_text(ui_LabelGY, gy_str);
-                        if (ui_LabelGZ)
-                            lv_label_set_text(ui_LabelGZ, gz_str);
-                    }
-                }
-
-                // Fall Detection State Machine (Runs fast)
-                // Advanced Fall Detection State Machine
-                uint32_t now = pdTICKS_TO_MS(xTaskGetTickCount());
-
-                switch (fallState)
-                {
                 case IDLE:
-                    // Phase 1: Free Fall (or Pre-Impact)
-                    if (g_total < FALL_THRESHOLD_LOW)
-                    {
-                        // Store current orientation as reference before the chaos starts
-                        ref_ax = acc.x;
-                        ref_ay = acc.y;
-                        ref_az = acc.z;
-
+                    if (qmi_ready && g_total < FALL_THRESHOLD_LOW) {
+                        ref_ax = acc.x; ref_ay = acc.y; ref_az = acc.z;
                         potentialFallCount++;
-                        snprintf(info_str, sizeof(info_str), "FreeFall? (Pot:%d)", potentialFallCount);
-                        lv_label_set_text(ui_LabelInfo, info_str);
-
                         fallState = FREE_FALL;
-                        stateTimer = now;
-                    }
-                    else
-                    {
-                        // Constant update of reference vector while stable (optional, but good for tracking)
-                        if (abs(g_total - 1.0f) < 0.1f)
-                        {
-                            ref_ax = acc.x;
-                            ref_ay = acc.y;
-                            ref_az = acc.z;
-                        }
+                        stateTimer = (unsigned long)now_ms_abs;
+                        snprintf(info_str, sizeof(info_str), "Pad? (Pot:%d)", potentialFallCount);
+                        lv_label_set_text(ui_LabelInfo, info_str);
+                    } else if (qmi_ready && fabsf(g_total - 1.0f) < 0.1f) {
+                        ref_ax = acc.x; ref_ay = acc.y; ref_az = acc.z;
                     }
                     break;
-
                 case FREE_FALL:
-                    // Phase 2: Impact
-                    if (g_total > FALL_THRESHOLD_HIGH)
-                    {
-                        ESP_LOGW(TAG, "!!! IMPACT DETECTED (G: %.2f) !!!", g_total);
+                    if (g_total > FALL_THRESHOLD_HIGH) {
+                        fallState = IMPACT_DETECTED;
+                        stateTimer = (unsigned long)now_ms_abs;
                         snprintf(info_str, sizeof(info_str), "IMPACT! (G:%.1f)", g_total);
                         lv_label_set_text(ui_LabelInfo, info_str);
-
+                    } else if (now_ms_abs - stateTimer > 1000) fallState = IDLE;
+                    break;
+                case IMPACT_DETECTED:
+                    if (now_ms_abs - stateTimer > 500) {
                         fallState = WAITING_FOR_STILLNESS;
-                        stateTimer = now;
-                    }
-                    // Timeout if impact doesn't happen shortly after free fall
-                    else if (now - stateTimer > 500)
-                    {
-                        fallState = IDLE;
-                        snprintf(info_str, sizeof(info_str), "Monitoring...");
-                        lv_label_set_text(ui_LabelInfo, info_str);
+                        stateTimer = (unsigned long)now_ms_abs;
                     }
                     break;
-
                 case WAITING_FOR_STILLNESS:
-                    // Phase 3: Stillness & Orientation Check
-
-                    // Allow some time for "settling" after impact (first 1s might be chaotic)
-                    if (now - stateTimer < 1000)
-                        break;
-
-                    // If we exceeded the stillness duration, check the result
-                    if (now - stateTimer > STILLNESS_DURATION_MS)
-                    {
-                        // Calculate Orientation Change
-                        // Dot Product: A . B = |A|*|B|*cos(theta)
-                        // theta = acos( (AxBx + AyBy + AzBz) / (NormA * NormB) )
-
-                        float curr_norm = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-                        float ref_norm = sqrt(ref_ax * ref_ax + ref_ay * ref_ay + ref_az * ref_az);
-
+                    if (g_total > (1.0f + STILLNESS_TOLERANCE) || g_total < (1.0f - STILLNESS_TOLERANCE)) {
+                        stateTimer = (unsigned long)now_ms_abs; 
+                    } else if (now_ms_abs - stateTimer > (uint64_t)STILLNESS_DURATION_MS) {
                         float dot = (acc.x * ref_ax + acc.y * ref_ay + acc.z * ref_az);
-                        float cos_theta = dot / (curr_norm * ref_norm);
-
-                        // Clamp for float errors
-                        if (cos_theta > 1.0f)
-                            cos_theta = 1.0f;
-                        if (cos_theta < -1.0f)
-                            cos_theta = -1.0f;
-
+                        float n1 = sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
+                        float n2 = sqrt(ref_ax*ref_ax + ref_ay*ref_ay + ref_az*ref_az);
+                        float cos_theta = dot / (n1 * n2);
+                        if (cos_theta > 1.0f) cos_theta = 1.0f; else if (cos_theta < -1.0f) cos_theta = -1.0f;
                         float angle_deg = acosf(cos_theta) * 180.0f / 3.14159f;
 
-                        ESP_LOGI(TAG, "Post-Fall Analysis: Angle Change: %.1f deg", angle_deg);
-
-                        if (angle_deg > ANGLE_THRESHOLD_DEG)
-                        {
+                        if (angle_deg > ANGLE_THRESHOLD_DEG) {
                             fallCount++;
-                            ESP_LOGE(TAG, "!!! FALL CONFIRMED (Angle: %.1f, Stillness Verified) !!!", angle_deg);
-                            ESP_LOGE(TAG, "!!! FALL CONFIRMED (Pad:%d)\nAngle:%.1f G:%.2f Lat:%.5f Lon:%.5f", fallCount, angle_deg, g_total, g_latitude, g_longitude);
-                            char ble_msg[128];
-                            snprintf(ble_msg, sizeof(ble_msg), "FALL_ACCEPTED Angle:%.1f G:%.2f Lat:%.5f Lon:%.5f", angle_deg, g_total, g_latitude, g_longitude);
-                            ble_spp_server_send_data((uint8_t *)ble_msg, strlen(ble_msg));
-
-                            snprintf(info_str, sizeof(info_str), "FALL CONFIRMED! (Pad:%d)\nAngle:%.1f G:%.2f Lat:%.5f Lon:%.5f", fallCount, angle_deg, g_total, g_latitude, g_longitude);
-
-                            // Send SMS Alert (Deferred via Screen 4 Countdown)
-                            if (example_lvgl_lock(-1))
-                            {
-                                start_fall_countdown_ui(false);
-                                example_lvgl_unlock();
-                            }
+                            start_fall_countdown_ui(false);
+                            fallState = IDLE;
+                        } else {
+                            fallState = IDLE;
+                            snprintf(info_str, sizeof(info_str), "Smetnja (%.0f deg)", angle_deg);
+                            lv_label_set_text(ui_LabelInfo, info_str);
                         }
-                        else
-                        {
-                            ESP_LOGW(TAG, "Fall rejected: Angle change too small (%.1f)", angle_deg);
-                            snprintf(info_str, sizeof(info_str), "False Alarm (Angle:%.0f)", angle_deg);
-                        }
-
-                        lv_label_set_text(ui_LabelInfo, info_str);
-                        fallState = IDLE;
-                    }
+                    } else if (now_ms_abs - stateTimer > 5000) fallState = IDLE;
                     break;
+            }
 
-                case IMPACT_DETECTED:
-                    // Unused state in this new simplified flow
-                    fallState = WAITING_FOR_STILLNESS;
-                    break;
-                }
-            } // end qmi_updated
-
-            // --- Battery & Screen Timeout Logic (Periodic) ---
-            if (report_now)
+            if (screen_is_on && (now_ms_abs - last_touch_time > (uint64_t)SCREEN_TIMEOUT_MS))
             {
-                // 1. Check Battery
-                int batt_mv = axp_get_batt_vol();
-                g_batt_pct = axp_get_batt_percent(); // Update global/static
-                g_batt_pct_snapshot = g_batt_pct;
-                int batt_pct = g_batt_pct;
-                bool charging = axp_is_charging(); // Optional
-
-                static uint64_t last_pwr_log = 0;
-                if ((esp_timer_get_time() / 1000 - last_pwr_log) > 3000)
-                {
-                    last_pwr_log = esp_timer_get_time() / 1000;
-                    // Update UI log
-                    ESP_LOGI("PWR", "Bat: %d%% (%dmV) - Charging: %d", batt_pct, batt_mv, charging);
-                }
-
-                // Update Battery on Watch Face
-                if (batt_pct >= 0)
-                {
-                    char bat_str[32];
-                    if (charging)
-                    {
-                        snprintf(bat_str, sizeof(bat_str), LV_SYMBOL_CHARGE " %d%%", batt_pct);
-                        if (ui_LabelBatt)
-                        {
-                            lv_label_set_text(ui_LabelBatt, bat_str);
-                            lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0x00FF00), LV_PART_MAIN); // Green
-                        }
-                    }
-                    else
-                    {
-                        snprintf(bat_str, sizeof(bat_str), "%d%%", batt_pct);
-                        if (ui_LabelBatt)
-                        {
-                            lv_label_set_text(ui_LabelBatt, bat_str);
-                            lv_obj_set_style_text_color(ui_LabelBatt, lv_color_hex(0xFFFFFF), LV_PART_MAIN); // White
-                        }
-                    }
-                }
-
-                // 2. Update Time from system clock (1Hz)
-                static time_t last_ui_time = 0;
-                time_t now_time = time(NULL);
-                if (now_time != last_ui_time) {
-                    last_ui_time = now_time;
-                    struct tm *timeinfo = localtime(&now_time);
-                    char clock_str[10];
-                    snprintf(clock_str, sizeof(clock_str), "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
-                    if (ui_LabelTime) lv_label_set_text(ui_LabelTime, clock_str);
-                    if (ui_AODTime) lv_label_set_text(ui_AODTime, clock_str);
-                }
-
-                // 3. Check Screen Timeout
-                uint64_t now_ms = esp_timer_get_time() / 1000;
-                if (screen_is_on && (now_ms - last_touch_time > SCREEN_TIMEOUT_MS))
-                {
-                    screen_is_on = false;
-                    ESP_LOGI("PWR", "Screen TIMEOUT -> Entering AOD");
-                    
-                    if (g_is_aod_mode) {
-                        if (ui_AODScreen == NULL) create_aod_screen();
-                        lv_scr_load_anim(ui_AODScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
-                        
-                        // Dim brightness for AOD
-                        uint8_t brightness = 0x10; 
-                        esp_lcd_panel_io_tx_param(io_handle, 0x51, &brightness, 1);
-                    } else {
-                        if (panel_handle) esp_lcd_panel_disp_on_off(panel_handle, false);
-#if EXAMPLE_PIN_NUM_BK_LIGHT >= 0
-                        gpio_set_level((gpio_num_t)EXAMPLE_PIN_NUM_BK_LIGHT, EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL);
-#endif
-                    }
+                screen_is_on = false;
+                if (g_is_aod_mode) {
+                    if (ui_AODScreen == NULL) create_aod_screen();
+                    lv_scr_load_anim(ui_AODScreen, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, false);
+                    uint8_t br = 0x20; esp_lcd_panel_io_tx_param(io_handle, 0x51, &br, 1);
+                } else {
+                    if (panel_handle) esp_lcd_panel_disp_on_off(panel_handle, false);
                 }
             }
 
-            // --- HEARTBEAT (1Hz) ---
-            static uint64_t last_heartbeat = 0;
-            if (esp_timer_get_time() / 1000 - last_heartbeat > 1000)
-            {
-                last_heartbeat = esp_timer_get_time() / 1000;
-                char beat_msg[64];
-                // STATUS G:%.2f P:%d S:%d B:%d L:%.5f,%.5f
-                snprintf(beat_msg, sizeof(beat_msg), "STATUS G:%.2f P:%ld S:%ld B:%d Lat:%.5f Lon:%.5f",
-                         g_total, heartRate, spo2, g_batt_pct, g_latitude, g_longitude);
+            static uint64_t last_ble_beat = 0;
+            if (now_ms_abs - last_ble_beat > 1000) {
+                last_ble_beat = now_ms_abs;
+                char beat_msg[128];
+                snprintf(beat_msg, sizeof(beat_msg), "STATUS G:%.2f P:%d S:%d B:%d Lat:%.5f Lon:%.5f",
+                         g_total, (int)heartRate, (int)spo2, g_batt_pct, g_latitude, g_longitude);
                 ble_spp_server_send_data((uint8_t *)beat_msg, strlen(beat_msg));
-                // ESP_LOGI("BLE", "Sent Heartbeat: %s", beat_msg);
             }
-
             example_lvgl_unlock();
         }
-
         vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
@@ -1772,25 +1620,10 @@ void gps_task(void *arg)
         example_lvgl_unlock();
     }
 
-    lc76g_init(I2C_NUM_0); // Using shared I2C port
+    lc76g_init(I2C_NUM_0); 
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Crucial: give module time to boot after EXIO power-up
 
-    // --- DEBUG: I2C SCANNER (Disabled) ---
-    /*
-    ESP_LOGI("I2C_SCAN", "Scanning I2C bus...");
-    for (int i = 0; i < 128; i++)
-    {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, 50 / portTICK_PERIOD_MS);
-        i2c_cmd_link_delete(cmd);
-        if (ret == ESP_OK)
-        {
-            ESP_LOGI("I2C_SCAN", "Found device at: 0x%02X", i);
-        }
-    }
-    */
+    // --- I2C SCANNER REMOVED ---
     // --------------------------
 
     uint8_t *buffer = (uint8_t *)malloc(512); // Buffer for NMEA data
@@ -1812,6 +1645,11 @@ void gps_task(void *arg)
         esp_err_t ret = lc76g_read_data(buffer, 511, &read_len);
         if (ret == ESP_OK && read_len > 0)
         {
+            static uint32_t total_gps_bytes = 0;
+            total_gps_bytes += read_len;
+            if (total_gps_bytes % 500 < 50) { // Log occasionally
+                ESP_LOGI("GPS_DIAG", "Total bytes received via I2C: %lu. First char: '%c'", total_gps_bytes, buffer[0]);
+            }
             // Process byte by byte to find newlines
             for (int i = 0; i < read_len; i++)
             {
@@ -1842,11 +1680,21 @@ void gps_task(void *arg)
             // buffer[read_len] = 0;
             // ESP_LOGI("GPS_NMEA", "%s", (char *)buffer);
         }
+        else if (ret == ESP_OK && read_len == 0)
+        {
+            static uint64_t last_silent_log = 0;
+            if (esp_timer_get_time() / 1000 - last_silent_log > 5000)
+            {
+                last_silent_log = esp_timer_get_time() / 1000;
+                ESP_LOGW("GPS_DIAG", "UART2 is SILENT (No data in 5s) - Check Pins 43/44");
+            }
+        }
         else if (ret != ESP_OK)
         {
             static uint32_t last_gps_err = 0;
-            if (esp_timer_get_time() / 1000 - last_gps_err > 5000) {
-                ESP_LOGW("GPS", "I2C Comm Fail or Busy: %s", esp_err_to_name(ret));
+            if (esp_timer_get_time() / 1000 - last_gps_err > 5000)
+            {
+                ESP_LOGW("GPS", "I2C Comm Fail or Timeout: %s", esp_err_to_name(ret));
                 last_gps_err = esp_timer_get_time() / 1000;
             }
         }
@@ -2008,8 +1856,8 @@ extern "C" void trigger_fall_sms(void)
     ESP_LOGE("ALERT", "=== FALL SIMULATION TRIGGERED ===");
 
     char sms_msg[160];
-    snprintf(sms_msg, sizeof(sms_msg), "UPOZORENJE! Detektovan SIMULIRAN pad!\nLokacija: https://maps.google.com/?q=%.6f,%.6f\nPuls: %ld",
-             g_latitude, g_longitude, heartRate);
+    snprintf(sms_msg, sizeof(sms_msg), "UPOZORENJE! Detektovan SIMULIRAN pad!\nLokacija: https://maps.google.com/?q=%.6f,%.6f\nPuls: %d",
+             g_latitude, g_longitude, (int)heartRate);
 
     // For simulation, we still use the single number from UI for safety/test
     gsm_send_sms_async(ui_get_phone_number(), sms_msg);
@@ -2035,8 +1883,8 @@ extern "C" void trigger_real_fall_sms(void)
         char *token = strtok(nums, ",");
         while (token != NULL) {
             char sms_msg[160];
-            snprintf(sms_msg, sizeof(sms_msg), "SOS! LifeLink detektovao pad!\nLokacija: %s\nPuls: %ld",
-                     google_maps_url, heartRate);
+            snprintf(sms_msg, sizeof(sms_msg), "SOS! LifeLink detektovao pad!\nLokacija: %s\nPuls: %d",
+                     google_maps_url, (int)heartRate);
             
             // Trim whitespace if any
             while(*token == ' ') token++;
