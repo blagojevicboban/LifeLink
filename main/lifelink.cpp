@@ -155,20 +155,18 @@ float irBufferFloat[TEST_BUFFER_LENGTH];
 float redBufferFloat[TEST_BUFFER_LENGTH];
 
 int32_t bufferLength = TEST_BUFFER_LENGTH;
-int32_t spo2 = 0;
-int8_t validSPO2 = 0;
+
+// --- Global Metrics ---
 int32_t heartRate = 0;
-int8_t validHeartRate = 0;
+int32_t spo2 = 0;
 float fft_hr = 0;
 float fft_spo2 = 0;
-
-// --- GPS Globals ---
-float g_latitude = 0.0f;
-float g_longitude = 0.0f;
-
-// Snapshots for WiFi/External Tasks
+float g_latitude = 0, g_longitude = 0;
 float g_total_snapshot = 1.0f;
 int g_batt_pct_snapshot = 100;
+char g_mac_str[18] = {0}; // Global MAC string for API ID
+
+#define MARIADB_API_URL "http://lifelink.tsp.edu.rs/api/update.php" // Zvanična produkciona adresa na tsp.edu.rs
 
 // Forward Declarations
 static bool example_lvgl_lock(int timeout_ms);
@@ -978,84 +976,57 @@ void wifi_init_sta(void) {
     s_wifi_init_done = true;
 }
 
-esp_err_t send_to_firestore(const char* path, const char* post_data) {
+esp_err_t send_to_api(const char* post_data) {
     if (!s_wifi_connected) return ESP_FAIL;
 
-    char url[256];
-    // NOTE: User must replace YOUR_PROJECT_ID
-    snprintf(url, sizeof(url), "https://firestore.googleapis.com/v1/projects/YOUR_PROJECT_ID/databases/(default)/documents/%s", path);
-
     esp_http_client_config_t config = {};
-    config.url = url;
+    config.url = MARIADB_API_URL;
     config.method = HTTP_METHOD_POST;
-    config.crt_bundle_attach = esp_crt_bundle_attach;
+    // Za lokalni server obično ne treba crt_bundle, ali ostavljamo za HTTPS podršku
+    config.crt_bundle_attach = esp_crt_bundle_attach; 
+    
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
 
     esp_err_t err = esp_http_client_perform(client);
     if (err == ESP_OK) {
-        ESP_LOGI("FIRESTORE", "HTTP POST Status = %d", esp_http_client_get_status_code(client));
+        ESP_LOGI("API", "HTTP POST MariaDB Status = %d", esp_http_client_get_status_code(client));
     } else {
-        ESP_LOGE("FIRESTORE", "HTTP POST request failed: %s", esp_err_to_name(err));
+        ESP_LOGE("API", "HTTP POST to MariaDB failed: %s", esp_err_to_name(err));
     }
     esp_http_client_cleanup(client);
     return err;
 }
 
+
+
 void wifi_upload_task(void *pvParameters) {
-    char mac_str[18];
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    snprintf(g_mac_str, sizeof(g_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     while (1) {
         if (s_wifi_connected && g_wifi_enabled) {
-            // Prepare Health Snapshot
-            cJSON *root = cJSON_CreateObject();
-            cJSON *fields = cJSON_CreateObject();
-            
-            // Firestore REST API format is verbose
-            auto add_int = [&](const char* key, int val) {
-                cJSON *v = cJSON_CreateObject();
-                cJSON_AddNumberToObject(v, "integerValue", val);
-                cJSON_AddItemToObject(fields, key, v);
-            };
-            auto add_double = [&](const char* key, double val) {
-                cJSON *v = cJSON_CreateObject();
-                cJSON_AddNumberToObject(v, "doubleValue", val);
-                cJSON_AddItemToObject(fields, key, v);
-            };
-            auto add_string = [&](const char* key, const char* val) {
-                cJSON *v = cJSON_CreateObject();
-                cJSON_AddStringToObject(v, "stringValue", val);
-                cJSON_AddItemToObject(fields, key, v);
-            };
-
-            add_int("pulse", (int)heartRate);
-            add_int("spo2", (int)spo2);
-            add_double("gForce", (double)g_total_snapshot);
-            add_int("battery", (int)g_batt_pct_snapshot);
-            add_string("source", "wifi");
-            
-            // Add GPS coordinates if available
+            // 1. Pripremi podatak za MariaDB PHP API (Ravan JSON format)
+            cJSON *root_api = cJSON_CreateObject();
+            cJSON_AddStringToObject(root_api, "device_id", g_mac_str);
+            cJSON_AddStringToObject(root_api, "name", "LifeLink Watch");
+            cJSON_AddNumberToObject(root_api, "pulse", (int)heartRate);
+            cJSON_AddNumberToObject(root_api, "spo2", (int)spo2);
+            cJSON_AddNumberToObject(root_api, "battery", (int)g_batt_pct_snapshot);
+            cJSON_AddNumberToObject(root_api, "gForce", (double)g_total_snapshot);
+            cJSON_AddStringToObject(root_api, "source", "wifi");
             if (g_latitude != 0.0f || g_longitude != 0.0f) {
-                add_double("lat", (double)g_latitude);
-                add_double("lon", (double)g_longitude);
+                cJSON_AddNumberToObject(root_api, "lat", (double)g_latitude);
+                cJSON_AddNumberToObject(root_api, "lon", (double)g_longitude);
             }
-
-            cJSON_AddItemToObject(root, "fields", fields);
-            char *post_data = cJSON_PrintUnformatted(root);
-            
-            char path[128];
-            snprintf(path, sizeof(path), "devices/%s/health_snapshots", mac_str);
-            ESP_LOGI("WIFI_TASK", "Uploading health snapshot to Firestore: %s (HR: %d, SpO2: %d)", path, (int)heartRate, (int)spo2);
-            send_to_firestore(path, post_data);
-
-            free(post_data);
-            cJSON_Delete(root);
+            char *post_data_api = cJSON_PrintUnformatted(root_api);
+            send_to_api(post_data_api);
+            free(post_data_api);
+            cJSON_Delete(root_api);
         }
-        vTaskDelay(pdMS_TO_TICKS(30000)); // Every 30s
+        vTaskDelay(pdMS_TO_TICKS(30000)); // Svakih 30 sekundi
     }
 }
 
@@ -1078,7 +1049,19 @@ extern "C" void trigger_sos_alarm(void) {
     snprintf(ble_msg, sizeof(ble_msg), "SOS_ALARM Lat:%.5f Lon:%.5f", g_latitude, g_longitude);
     ble_spp_server_send_data((uint8_t *)ble_msg, strlen(ble_msg));
 
-    // 2. Trigger GSM SMS alert if enabled
+    // 2. Send Fall Event to MariaDB via WiFi if available
+    if (s_wifi_connected && g_wifi_enabled) {
+        cJSON *root_api = cJSON_CreateObject();
+        cJSON_AddStringToObject(root_api, "device_id", g_mac_str);
+        cJSON_AddBoolToObject(root_api, "is_fall", true);
+        cJSON_AddNumberToObject(root_api, "gForce", (double)g_total_snapshot);
+        char *post_data_api = cJSON_PrintUnformatted(root_api);
+        send_to_api(post_data_api);
+        free(post_data_api);
+        cJSON_Delete(root_api);
+    }
+
+    // 3. Trigger GSM SMS alert if enabled
     if (g_w_enable_sos && strlen(g_w_sos_number) > 0) {
        ESP_LOGI("ALARM", "Sending SMS to SOS number: %s", g_w_sos_number);
        // gsm_send_sms(g_w_sos_number, "LifeLink ALERT: PAD DETEKTOVAN! Lokacija: https://maps.google.com/?q=%.5f,%.5f", g_latitude, g_longitude);
@@ -1620,11 +1603,23 @@ void gps_task(void *arg)
         example_lvgl_unlock();
     }
 
-    lc76g_init(I2C_NUM_0); 
-    vTaskDelay(pdMS_TO_TICKS(2000)); // Crucial: give module time to boot after EXIO power-up
+    // --- I2C SCANNER ADDED FOR DEBUGGING ---
+    ESP_LOGI("GPS_DIAG", "Scanning I2C bus 0 for GPS and other devices...");
+    for (int i = 1; i < 127; i++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(10));
+        i2c_cmd_link_delete(cmd);
+        if (ret == ESP_OK) {
+            ESP_LOGI("GPS_DIAG", "Found I2C device at address: 0x%02X", i);
+        }
+    }
+    // --------------------------------------
 
-    // --- I2C SCANNER REMOVED ---
-    // --------------------------
+    lc76g_init(I2C_NUM_0); 
+
 
     uint8_t *buffer = (uint8_t *)malloc(512); // Buffer for NMEA data
     size_t read_len = 0;
