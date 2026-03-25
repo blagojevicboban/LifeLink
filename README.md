@@ -9,19 +9,15 @@ LifeLink is an advanced smartwatch prototype built on the **ESP32-S3** platform,
 - **Advanced Fall Detection**: Utilizes the QMI8658 IMU (Accelerometer + Gyroscope) to detect sudden drops (Free Fall) and hard impacts. It requires extended stillness after an impact coupled with an orientation shift to confirm a real fall and avoid false alarms.
 - **Improved MAX30102 Algorithm**: Hand-tuned heart rate and SpO2 calculation using FFT on a 100Hz sampling window. 
   - **Artifact Rejection**: Filters out low-frequency noise (below 45 BPM) and physiologically impossible values (above 220 BPM).
-  - **Reflective Optimization**: Calibrated SpO2 formula (`104 - 17*R`) specifically for wrist-based reflective sensing.
+- **LC76G GPS Integration**: Support for the **LC76G High-Precision GPS** module via **I2C interface**.
+  - **NMEA Parsing**: On-board parsing of `$GNRMC` and `$GNGGA` sentences for real-time Latitude, Longitude, and Speed.
+  - **Hardware Reset**: Managed via TCA9554 GPIO expander for robust startup.
+- **Cloud Dashboard Connectivity**: Directly uploads health metrics and GPS coordinates to **Firebase Firestore** every 30 seconds.
 - **Autonomous Emergency Response**: The watch can operate fully independently of the mobile app in an emergency:
-  - **Sequential SMS**: Sends custom SOS messages to multiple emergency contacts.
-  - **Sequential Calls**: Automatically initiates voice calls to primary contacts if a fall is confirmed.
-  - **SOS Call**: One-button or automatic priority emergency dispatch.
-- **I2C Fast Mode (400kHz)**: Optimized I2C bus clock speed for ultra-reliable communication across all shared sensors (MAX30102, QMI8658, AXP2101).
-- **Automated GSM Emergency SMS**: Communicates with a SIM800L/A6 GSM Module to send background SMS alerts containing:
-  - Precise GPS coordinates formatted as a direct Google Maps link.
-  - Real-time heart rate at the time of the event.
-  - Contextual warnings stating whether the fall was real or simulated.
-- **WiFi Cloud Connectivity**: Directly connects to WiFi and uploads health metrics and GPS coordinates to Firestore REST API every 30 seconds for remote dashboard monitoring.
-- **Always-On Display (AOD)**: Energy-efficient idle mode showing time on a dimmed black background, extending battery life while maintaining utility.
-- **NMEA GPS Support**: Integrated parsing of NMEA strings from external GPS modules for precise location tracking.
+  - **Sequential SMS**: Sends custom SOS messages to multiple emergency contacts via SIM800L.
+  - **Google Maps Links**: GPS coordinates are automatically formatted into clickable map links.
+- **Always-On Display (AOD)**: Energy-efficient idle mode showing time on a dimmed black background.
+- **I2C Fast Mode (400kHz)**: Optimized bus clock speed for shared sensors (MAX30102, QMI8658, AXP2101, LC76G).
 
 ## Companion Mobile App (Flutter)
 
