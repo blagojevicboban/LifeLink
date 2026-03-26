@@ -1,8 +1,6 @@
 CompileFlags:
   CompilationDatabase: "build"
   Add:
-    - --query-driver=C:/Espressif/tools/xtensa-esp-elf/esp-14.2.0_20251107/xtensa-esp-elf/bin/xtensa-esp32s3-elf-*.exe
-    - --target=xtensa-esp32s3-elf
     - -mlongcalls
     - -fno-builtin-memcpy
     - -D__GNUC__=14
@@ -18,3 +16,9 @@ CompileFlags:
     - "C:/esp/v5.5.2/esp-idf/components/soc/include"
     - -isystem
     - "C:/esp/v5.5.2/esp-idf/components/hal/include"
+  Remove:
+    - -mdisable-hardware-atomics
+    - -fstrict-volatile-bitfields
+    - -fno-tree-switch-conversion
+    - -mfix-esp32-erratum-72
+    - -mno-longcalls

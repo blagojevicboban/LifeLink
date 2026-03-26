@@ -69,6 +69,7 @@ lv_obj_t *ui_AODScreen = NULL;
 lv_obj_t *ui_AODTime = NULL;
 
 extern "C" lv_obj_t * ui_Screen1; // Dashboard
+SemaphoreHandle_t g_i2c_mux = NULL; 
 
 void create_aod_screen() {
     ui_AODScreen = lv_obj_create(NULL);
@@ -410,9 +411,6 @@ esp_err_t i2c_init(void)
     i2c_conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
     i2c_param_config(I2C_MASTER_NUM, &i2c_conf);
     
-    // Set SCL Hardware Timeout to prevent bus lockups (in APB clock cycles, ~13ms @ 80MHz)
-    i2c_set_timeout(I2C_MASTER_NUM, 0xFFFFF); 
-
     return i2c_driver_install(I2C_MASTER_NUM, i2c_conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, ESP_INTR_FLAG_IRAM);
 }
 
@@ -564,20 +562,18 @@ void example_lvgl_rounder_cb(struct _lv_disp_drv_t *disp_drv, lv_area_t *area)
 #if EXAMPLE_USE_TOUCH
 static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
-    uint8_t touched = touch.getPoint(x, y, 2);
+    uint8_t touched = 0;
+    if (g_i2c_mux && xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(10))) {
+        touched = touch.getPoint(x, y, 2);
+        xSemaphoreGive(g_i2c_mux);
+    }
+
     if (touched)
     {
-
-        for (int i = 0; i < 1; ++i)
-        {
-            data->point.x = x[0];
-            data->point.y = y[0];
-            data->state = LV_INDEV_STATE_PRESSED;
-            // ESP_LOGI(TAG, "Touch[%d]: X=%d Y=%d", i, x[i], y[i]);
-
-            // Reset Timeout on Touch
-            reset_screen_timer();
-        }
+        data->point.x = x[0];
+        data->point.y = y[0];
+        data->state = LV_INDEV_STATE_PRESSED;
+        reset_screen_timer();
     }
     else
     {
@@ -1055,6 +1051,10 @@ extern "C" void trigger_sos_alarm(void) {
         cJSON_AddStringToObject(root_api, "device_id", g_mac_str);
         cJSON_AddBoolToObject(root_api, "is_fall", true);
         cJSON_AddNumberToObject(root_api, "gForce", (double)g_total_snapshot);
+        if (g_latitude != 0.0f || g_longitude != 0.0f) {
+            cJSON_AddNumberToObject(root_api, "lat", (double)g_latitude);
+            cJSON_AddNumberToObject(root_api, "lon", (double)g_longitude);
+        }
         char *post_data_api = cJSON_PrintUnformatted(root_api);
         send_to_api(post_data_api);
         free(post_data_api);
@@ -1063,8 +1063,12 @@ extern "C" void trigger_sos_alarm(void) {
 
     // 3. Trigger GSM SMS alert if enabled
     if (g_w_enable_sos && strlen(g_w_sos_number) > 0) {
-       ESP_LOGI("ALARM", "Sending SMS to SOS number: %s", g_w_sos_number);
-       // gsm_send_sms(g_w_sos_number, "LifeLink ALERT: PAD DETEKTOVAN! Lokacija: https://maps.google.com/?q=%.5f,%.5f", g_latitude, g_longitude);
+        char sms_msg[160];
+        snprintf(sms_msg, sizeof(sms_msg),
+                 "LifeLink UPOZORENJE: PAD DETEKTOVAN! g=%.2f. Lokacija: https://maps.google.com/?q=%.5f,%.5f",
+                 g_total_snapshot, g_latitude, g_longitude);
+        ESP_LOGI("ALARM", "Slanje SMS na SOS broj: %s", g_w_sos_number);
+        gsm_send_sms_async(g_w_sos_number, sms_msg);
     }
 }
 
@@ -1100,10 +1104,16 @@ extern "C" void app_main(void)
     // P2 is LCD_VCC_EN (Needs to be HIGH)
     // P0/P1 are Touch Reset/INT (Needs to be HIGH)
     // P7 is GPS_RST (Needs to be HIGH for operational)
+    g_i2c_mux = xSemaphoreCreateMutex();
+    
     uint8_t tca_cfg[] = {0x03, 0x00}; // Reg 0x03 = Configuration (0=All Output)
-    uint8_t tca_val[] = {0x01, 0xFF}; // Reg 0x01 = Output Port (0xFF = P0-P7 HIGH)
-    i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_cfg, 2, pdMS_TO_TICKS(100));
-    i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_val, 2, pdMS_TO_TICKS(100));
+    uint8_t tca_val[] = {0x01, 0xDF}; // Reg 0x01 = Output (0xDF: P5 LOW for I2C, others HIGH)
+    
+    if (xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(1000))) {
+        i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_cfg, 2, pdMS_TO_TICKS(100));
+        i2c_master_write_to_device(I2C_MASTER_NUM, TCA9554_ADDR, tca_val, 2, pdMS_TO_TICKS(100));
+        xSemaphoreGive(g_i2c_mux);
+    }
     vTaskDelay(pdMS_TO_TICKS(100)); // Wait for VDD to stabilize
 
 #if EXAMPLE_USE_TOUCH
@@ -1319,7 +1329,7 @@ extern "C" void app_main(void)
 
         // Setup Sensor & Tasks immediately for responsive UI
         setup_accel();
-        xTaskCreate(read_sensor_data, "sensor_read_task", 8192, NULL, 3, NULL);
+        xTaskCreate(read_sensor_data, "sensor_read_task", 12288, NULL, 3, NULL);
         xTaskCreate(gps_task, "gps_task", 4096, NULL, 2, NULL); 
 
         // --- Power Management Task (or just add to loop if lightweight) ---
@@ -1344,6 +1354,8 @@ void read_sensor_data(void *arg)
     char info_str[128] = "Monitoring...";
     float g_total = 1.0f; 
     static int g_batt_pct = 0; 
+    bool validHeartRate = false;
+    bool validSPO2 = false;
     
     extern float g_total_snapshot;
     extern int g_batt_pct_snapshot;
@@ -1353,6 +1365,7 @@ void read_sensor_data(void *arg)
     uint64_t last_batt_check = 0;
     uint64_t last_sensor_log = 0;
     uint64_t last_ui_report = 0;
+    static int skipCount = 0;
 
     while (1)
     {
@@ -1383,41 +1396,43 @@ void read_sensor_data(void *arg)
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
 
-            max30102.check();
-            static int skipCount = 0;
-            while (max30102.available())
+            if (xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(100))) {
+                max30102.check();
+                while (max30102.available()) {
+                    uint32_t r = max30102.getRed();
+                    uint32_t ir = max30102.getIR();
+                    max30102.nextSample();
+                    
+                    if (skipCount % 4 == 0 && samplesCollected < TEST_BUFFER_LENGTH) {
+                        redBuffer[samplesCollected] = r;
+                        irBuffer[samplesCollected] = ir;
+                        samplesCollected++;
+                    }
+                    skipCount++;
+                }
+                xSemaphoreGive(g_i2c_mux);
+            }
+
+            if (samplesCollected == TEST_BUFFER_LENGTH)
             {
-                uint32_t r = max30102.getRed();
-                uint32_t ir = max30102.getIR();
-                
-                if (skipCount % 4 == 0 && samplesCollected < TEST_BUFFER_LENGTH) {
-                    redBuffer[samplesCollected] = r;
-                    irBuffer[samplesCollected] = ir;
-                    samplesCollected++;
+                for (int i = 0; i < TEST_BUFFER_LENGTH; i++) {
+                    redBufferFloat[i] = (float)redBuffer[i];
+                    irBufferFloat[i] = (float)irBuffer[i];
                 }
-                max30102.nextSample();
-                skipCount++;
+                fft_process(redBufferFloat, irBufferFloat, TEST_BUFFER_LENGTH, 100, &fft_hr, &fft_spo2);
+                heartRate = (int32_t)fft_hr;
+                spo2 = (int32_t)fft_spo2;
+                validHeartRate = (heartRate >= 45 && heartRate <= 220);
+                validSPO2 = (spo2 >= 50 && spo2 <= 100);
+                ESP_LOGD("SENSORS", "HR valid: %d, SPO2 valid: %d", validHeartRate, validSPO2);
 
-                if (samplesCollected == TEST_BUFFER_LENGTH)
-                {
-                    for (int i = 0; i < TEST_BUFFER_LENGTH; i++) {
-                        redBufferFloat[i] = (float)redBuffer[i];
-                        irBufferFloat[i] = (float)irBuffer[i];
-                    }
-                    fft_process(redBufferFloat, irBufferFloat, TEST_BUFFER_LENGTH, 100, &fft_hr, &fft_spo2);
-                    heartRate = (int32_t)fft_hr;
-                    spo2 = (int32_t)fft_spo2;
-                    validHeartRate = (heartRate >= 45 && heartRate <= 220);
-                    validSPO2 = (spo2 >= 50 && spo2 <= 100);
-
-                    // Shift buffer (sliding window)
-                    int shift = 50;
-                    for (int i = shift; i < TEST_BUFFER_LENGTH; i++) {
-                        redBuffer [i - shift] = redBuffer[i];
-                        irBuffer  [i - shift] = irBuffer [i];
-                    }
-                    samplesCollected = TEST_BUFFER_LENGTH - shift;
+                // Shift buffer (sliding window)
+                int shift = 50;
+                for (int i = shift; i < TEST_BUFFER_LENGTH; i++) {
+                    redBuffer [i - shift] = redBuffer[i];
+                    irBuffer  [i - shift] = irBuffer [i];
                 }
+                samplesCollected = TEST_BUFFER_LENGTH - shift;
             }
 
             if (now_ms_abs - last_sensor_log > 3000) {
@@ -1437,12 +1452,15 @@ void read_sensor_data(void *arg)
 
         // 2. QMI8658
         bool qmi_ready = false;
-        if (qmi.getDataReady()) {
-            if (qmi.getAccelerometer(acc.x, acc.y, acc.z) && qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
-                g_total = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-                g_total_snapshot = g_total;
-                qmi_ready = true;
+        if (xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(100))) {
+            if (qmi.getDataReady()) {
+                if (qmi.getAccelerometer(acc.x, acc.y, acc.z) && qmi.getGyroscope(gyr.x, gyr.y, gyr.z)) {
+                    g_total = sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+                    g_total_snapshot = g_total;
+                    qmi_ready = true;
+                }
             }
+            xSemaphoreGive(g_i2c_mux);
         }
 
         // 3. Power
@@ -1603,41 +1621,30 @@ void gps_task(void *arg)
         example_lvgl_unlock();
     }
 
-    // --- I2C SCANNER ADDED FOR DEBUGGING ---
-    ESP_LOGI("GPS_DIAG", "Scanning I2C bus 0 for GPS and other devices...");
-    for (int i = 1; i < 127; i++) {
-        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-        i2c_master_start(cmd);
-        i2c_master_write_byte(cmd, (i << 1) | I2C_MASTER_WRITE, true);
-        i2c_master_stop(cmd);
-        esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(10));
-        i2c_cmd_link_delete(cmd);
-        if (ret == ESP_OK) {
-            ESP_LOGI("GPS_DIAG", "Found I2C device at address: 0x%02X", i);
-        }
-    }
-    // --------------------------------------
-
     lc76g_init(I2C_NUM_0); 
+    vTaskDelay(pdMS_TO_TICKS(100));
 
-
-    uint8_t *buffer = (uint8_t *)malloc(512); // Buffer for NMEA data
+    uint8_t *buffer = (uint8_t *)heap_caps_malloc(10240, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); 
+    if (!buffer) {
+        // Fallback to internal RAM if PSRAM not available
+        buffer = (uint8_t *)malloc(10240);
+    }
+    if (!buffer) {
+        ESP_LOGE("GPS", "Failed to allocate memory for GPS buffer!");
+        vTaskDelete(NULL);
+    }
     size_t read_len = 0;
 
     // Line buffer for assembling sentences
     static char line_buf[128];
     static int line_idx = 0;
 
-    if (!buffer)
-    {
-        ESP_LOGE("GPS", "Failed to allocate GPS buffer");
-        vTaskDelete(NULL);
-    }
+    // The previous `if (!buffer)` block was redundant and removed.
 
     while (1)
     {
-        // Read up to 511 bytes
-        esp_err_t ret = lc76g_read_data(buffer, 511, &read_len);
+        // Read up to 2560 bytes (our allocated buffer size)
+        esp_err_t ret = lc76g_read_data(buffer, 10240, &read_len);
         if (ret == ESP_OK && read_len > 0)
         {
             static uint32_t total_gps_bytes = 0;
@@ -1681,7 +1688,7 @@ void gps_task(void *arg)
             if (esp_timer_get_time() / 1000 - last_silent_log > 5000)
             {
                 last_silent_log = esp_timer_get_time() / 1000;
-                ESP_LOGW("GPS_DIAG", "UART2 is SILENT (No data in 5s) - Check Pins 43/44");
+                ESP_LOGW("GPS_DIAG", "GPS I2C is SILENT (No data in 5s) - Check TCA9554 and Address 0x54");
             }
         }
         else if (ret != ESP_OK)

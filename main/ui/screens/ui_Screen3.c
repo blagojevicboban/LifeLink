@@ -77,6 +77,9 @@ static lv_obj_t *create_row(lv_obj_t *parent, const char *label, int y, lv_event
 }
 
 // --- Gesture navigation ---
+// Screen 3 is the last screen in the swipe chain (Screen1 -> Screen2 -> Screen3).
+// Swipe-right goes back to Screen2. Swipe-left is intentionally disabled so the
+// screensaver (AOD screen with exact time) is NOT accessible via gestures.
 void ui_event_Screen3(lv_event_t *e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
@@ -86,11 +89,7 @@ void ui_event_Screen3(lv_event_t *e)
         lv_indev_wait_release(lv_indev_get_act());
         _ui_screen_change(&ui_Screen2, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 500, 0, &ui_Screen2_screen_init);
     }
-    if (event_code == LV_EVENT_GESTURE && lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_LEFT)
-    {
-        lv_indev_wait_release(lv_indev_get_act());
-        _ui_screen_change(&ui_Screen1, LV_SCR_LOAD_ANIM_MOVE_LEFT, 500, 0, &ui_Screen1_screen_init);
-    }
+    // Swipe-left from Screen3 is disabled: AOD/screensaver is not part of the swipe chain.
 }
 
 void ui_Screen3_screen_init(void)

@@ -73,7 +73,7 @@ void ui_Screen4_screen_init(void)
     scr4_counter = 10;
     scr4_timer = lv_timer_create(scr4_countdown_cb, 1000, NULL);
 
-    lv_obj_add_event_cb(ui_Screen4, scr4_tap_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ui_Screen4, scr4_tap_cb, LV_EVENT_CLICKED, NULL);
 }
 
 void ui_Screen4_screen_destroy(void)

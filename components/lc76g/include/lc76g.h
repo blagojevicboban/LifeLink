@@ -6,8 +6,12 @@ extern "C"
 {
 #endif
 
-#include "driver/i2c.h"
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "driver/i2c.h"
+
+extern SemaphoreHandle_t g_i2c_mux;
 
 // I2C Addresses for Waveshare LC76G (Protocol specific)
 #define LC76G_ADDR_W 0x50
@@ -15,10 +19,9 @@ extern "C"
 
 // TCA9554 Port Expander Address
 #define TCA9554_ADDR 0x20
-#define TCA9554_SYS_OUT_PIN 4  // EXIO4: System Output Enable
-#define TCA9554_GPS_EN_PIN  6  // EXIO6: GPS Enable
-#define TCA9554_GPS_RST_PIN 7  // EXIO7: GPS Reset Pin
-#include "driver/uart.h"
+#define TCA9554_GPS_EN_PIN  4  // EXIO4: GPS Enable (Active HIGH)
+#define TCA9554_I2C_SEL_PIN 5  // EXIO5: I2C Selection (LOW = I2C, HIGH = UART)
+#define TCA9554_GPS_RST_PIN 7  // EXIO7: GPS Reset Pin (Active LOW)
 
     /**
      * @brief Initialize the LC76G driver and reset the module.
