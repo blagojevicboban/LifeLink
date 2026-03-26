@@ -40,6 +40,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_mac.h"
 #include <string.h>
+#include <ctype.h>
 
 // --- Global Settings Variables ---
 int g_screen_timeout_ms = 15000;
@@ -884,12 +885,56 @@ extern "C" void spp_write_cb(uint8_t *data, uint16_t len)
 
 // --- WiFi & Firestore REST Logic ---
 void wifi_init_sta(void); 
+void wifi_upload_task(void *pvParameters); 
+
+// Helper: Trim spaces from start/end of string
+void str_trim(char *s) {
+    char *p = s;
+    int l = strlen(p);
+    while (l > 0 && isspace((unsigned char)p[l - 1])) p[--l] = 0;
+    while (*p && isspace((unsigned char)*p)) p++, l--;
+    memmove(s, p, l + 1);
+}
+
+void scan_wifi_and_print(void) {
+    ESP_LOGI("WIFI", "Starting manual scan to see what's available...");
+    
+    // We must ensure WiFi is in STA mode and started for scanning
+    wifi_mode_t mode;
+    esp_wifi_get_mode(&mode);
+    if (mode == WIFI_MODE_NULL) esp_wifi_set_mode(WIFI_MODE_STA);
+    
+    wifi_scan_config_t scan_config = {};
+    scan_config.show_hidden = true;
+    
+    esp_err_t res = esp_wifi_scan_start(&scan_config, true);
+    if (res != ESP_OK) {
+        ESP_LOGE("WIFI", "Scan failed: %s", esp_err_to_name(res));
+        return;
+    }
+    
+    uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+    wifi_ap_record_t *ap_info = (wifi_ap_record_t *)malloc(sizeof(wifi_ap_record_t) * ap_count);
+    if (ap_info) {
+        esp_wifi_scan_get_ap_records(&ap_count, ap_info);
+        ESP_LOGI("WIFI", "---------- SCAN RESULTS (%d found) ----------", ap_count);
+        for (int i = 0; i < ap_count; i++) {
+            ESP_LOGI("WIFI", "SSID: [%s] | RSSI: %d | CH: %d", 
+                     (char*)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary);
+        }
+        ESP_LOGI("WIFI", "---------------------------------------------");
+        free(ap_info);
+    }
+}
 
 extern "C" void wifi_reconnect_now() {
     ESP_LOGI("WIFI", "Manual reconnect requested via settings...");
     if (!s_wifi_init_done) {
         wifi_init_sta();
-    } else {
+        str_trim(g_wifi_ssid);
+        str_trim(g_wifi_pass);
+        
         wifi_config_t wifi_config = {};
         strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
         strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
@@ -901,7 +946,7 @@ extern "C" void wifi_reconnect_now() {
         esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
         esp_wifi_start();
         esp_wifi_connect();
-        ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting to %s...", g_wifi_ssid);
+        ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting to [%s]...", g_wifi_ssid);
     }
 }
 
@@ -923,15 +968,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
         wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
-        ESP_LOGW("WIFI", "Disconnected from AP, reason: %d", event->reason);
+        ESP_LOGW("WIFI", "Disconnected from %s, reason: %d", g_wifi_ssid, event->reason);
         
         if (lvgl_mux && example_lvgl_lock(10)) {
             if (ui_LabelWiFi_Icon) lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0xFF0000), 0); // Red
             example_lvgl_unlock();
         }
 
-        if (g_wifi_enabled) {
-            ESP_LOGI("WIFI", "Attempting reconnection...");
+        if (g_wifi_enabled && event->reason != WIFI_REASON_ASSOC_LEAVE) {
+            ESP_LOGI("WIFI", "Attempting reconnection in 2 seconds...");
+            if (event->reason == 201) {
+                scan_wifi_and_print();
+            }
+            vTaskDelay(pdMS_TO_TICKS(2000));
             esp_wifi_connect();
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -974,12 +1023,17 @@ void wifi_init_sta(void) {
                                                             NULL,
                                                             &instance_got_ip));
         s_wifi_init_done = true;
+        xTaskCreate(wifi_upload_task, "wifi_upload_task", 8192, NULL, 5, NULL);
     }
+
+    str_trim(g_wifi_ssid);
+    str_trim(g_wifi_pass);
 
     wifi_config_t wifi_config = {};
     strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
     strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
     wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN; // Scan all channels for better discovery
     
     // WPA3 Support (SAE) if available in this IDF version
     #if CONFIG_ESP_WIFI_PW_ID
@@ -1041,6 +1095,7 @@ void wifi_upload_task(void *pvParameters) {
             }
             char *post_data_api = cJSON_PrintUnformatted(root_api);
             send_to_api(post_data_api);
+            ESP_LOGI("WIFI", "Autonomni upload na MariaDB zavrsen (izvor: wifi)");
             free(post_data_api);
             cJSON_Delete(root_api);
         }
@@ -1121,7 +1176,6 @@ extern "C" void app_main(void)
 
     if (g_wifi_enabled) {
         wifi_init_sta();
-        xTaskCreate(wifi_upload_task, "wifi_upload_task", 8192, NULL, 5, NULL);
     }
 
 
