@@ -10,6 +10,7 @@ lv_obj_t *ui_LabelGPS = NULL;
 lv_obj_t *ui_LabelGPS_Icon = NULL; // GPS Icon
 lv_obj_t *ui_LabelGSM_Icon = NULL;
 lv_obj_t *ui_LabelGSM_Text = NULL;
+lv_obj_t *ui_LabelWiFi_Icon = NULL; // WiFi Icon
 lv_obj_t *ui_LabelBLT = NULL;
 lv_obj_t *ui_LabelBLE_Icon = NULL; // BLE Icon
 lv_obj_t *ui_LabelBatt = NULL; // Battery Text
@@ -95,10 +96,10 @@ void ui_Screen1_screen_init(void) {
     lv_obj_set_style_text_font(wifi_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(wifi_label, lv_color_hex(0xFFFFFF), 0);
 
-    lv_obj_t *wifi_icon = lv_label_create(wifi_cont);
-    lv_label_set_text(wifi_icon, LV_SYMBOL_WIFI);
-    lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xFFFFFF), 0);
+    ui_LabelWiFi_Icon = lv_label_create(wifi_cont);
+    lv_label_set_text(ui_LabelWiFi_Icon, LV_SYMBOL_WIFI);
+    lv_obj_set_style_text_font(ui_LabelWiFi_Icon, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0xFF0000), 0); // Default Red
 
 
     // 4. BLE Status (BLE label above icon)
@@ -264,27 +265,32 @@ void ui_Screen1_screen_init(void) {
     lv_obj_set_style_pad_left(pct_lbl, 5, 0);
 
 
-    // --- LOGO AREA AT THE BOTTOM (Style from Screen 2) ---
-    lv_obj_t *ui_LogoImage_S1 = lv_img_create(ui_Screen1);
-    lv_img_set_src(ui_LogoImage_S1, &ui_img_logo128_png);
-    lv_obj_set_size(ui_LogoImage_S1, 100, 100); // Slightly smaller than Screen 2 for S1
-    lv_obj_set_align(ui_LogoImage_S1, LV_ALIGN_CENTER);
-    lv_obj_set_y(ui_LogoImage_S1, 160);
-    lv_img_set_zoom(ui_LogoImage_S1, 120);
+    // --- LOGO AREA AT THE BOTTOM (Refactored to be safe and centered) ---
+    lv_obj_t *logo_cont = lv_obj_create(ui_Screen1);
+    lv_obj_set_size(logo_cont, 400, 80);
+    lv_obj_set_align(logo_cont, LV_ALIGN_CENTER);
+    lv_obj_set_y(logo_cont, 150); // Moved up slightly from 160 to avoid edge clipping
+    lv_obj_set_style_bg_opa(logo_cont, 0, 0);
+    lv_obj_set_style_border_width(logo_cont, 0, 0);
+    lv_obj_set_flex_flow(logo_cont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(logo_cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(logo_cont, 15, 0);
+    lv_obj_clear_flag(logo_cont, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t *lab_life = lv_label_create(ui_Screen1);
+    lv_obj_t *lab_life = lv_label_create(logo_cont);
     lv_label_set_text(lab_life, "Life");
     lv_obj_set_style_text_font(lab_life, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(lab_life, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_align(lab_life, LV_ALIGN_CENTER);
-    lv_obj_set_pos(lab_life, -85, 160);
 
-    lv_obj_t *lab_link = lv_label_create(ui_Screen1);
+    lv_obj_t *ui_LogoImage_S1 = lv_img_create(logo_cont);
+    lv_img_set_src(ui_LogoImage_S1, &ui_img_logo128_png);
+    lv_obj_set_size(ui_LogoImage_S1, LV_SIZE_CONTENT, LV_SIZE_CONTENT); 
+    lv_img_set_zoom(ui_LogoImage_S1, 160); // Scale down 128px to ~80px (160/256 * 128)
+
+    lv_obj_t *lab_link = lv_label_create(logo_cont);
     lv_label_set_text(lab_link, "Link");
     lv_obj_set_style_text_font(lab_link, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(lab_link, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_align(lab_link, LV_ALIGN_CENTER);
-    lv_obj_set_pos(lab_link, 85, 160);
 
     // --- INFO LABEL (Status Message/Alerts) ---
     // Repositioned to sit ABOVE the logo

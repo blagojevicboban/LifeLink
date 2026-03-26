@@ -97,7 +97,7 @@ esp_err_t lc76g_read_data(uint8_t *buffer, size_t max_len, size_t *read_len)
     uint8_t req_len_cmd[] = { 0x08, 0x00, 0x51, 0xAA, 0x04, 0x00, 0x00, 0x00 };
     esp_err_t ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, req_len_cmd, sizeof(req_len_cmd), pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Phase 1: Write to 0x%02X failed: %s", LC76G_ADDR_W, esp_err_to_name(ret));
+        // ESP_LOGD(TAG, "Phase 1: Write to 0x%02X failed: %s", LC76G_ADDR_W, esp_err_to_name(ret));
         xSemaphoreGive(g_i2c_mux);
         return ret;
     }
@@ -107,7 +107,7 @@ esp_err_t lc76g_read_data(uint8_t *buffer, size_t max_len, size_t *read_len)
     uint8_t len_buf[4] = {0};
     ret = i2c_master_read_from_device(g_i2c_port, LC76G_ADDR_R, len_buf, 4, pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Phase 2: Read from 0x%02X failed: %s", LC76G_ADDR_R, esp_err_to_name(ret));
+        // ESP_LOGD(TAG, "Phase 2: Read from 0x%02X failed: %s", LC76G_ADDR_R, esp_err_to_name(ret));
         xSemaphoreGive(g_i2c_mux);
         return ret;
     }
@@ -132,7 +132,7 @@ esp_err_t lc76g_read_data(uint8_t *buffer, size_t max_len, size_t *read_len)
     vTaskDelay(pdMS_TO_TICKS(100)); 
     ret = i2c_master_write_to_device(g_i2c_port, LC76G_ADDR_W, ack_cmd, sizeof(ack_cmd), pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Phase 3: Write ACK to 0x%02X failed: %s", LC76G_ADDR_W, esp_err_to_name(ret));
+        // ESP_LOGD(TAG, "Phase 3: Write ACK to 0x%02X failed: %s", LC76G_ADDR_W, esp_err_to_name(ret));
         xSemaphoreGive(g_i2c_mux);
         return ret;
     }
@@ -143,7 +143,7 @@ esp_err_t lc76g_read_data(uint8_t *buffer, size_t max_len, size_t *read_len)
     uint16_t to_read = (data_len > max_len) ? (uint16_t)max_len : (uint16_t)data_len;
     ret = i2c_master_read_from_device(g_i2c_port, LC76G_ADDR_R, buffer, to_read, pdMS_TO_TICKS(1000));
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Phase 4: Read payload from 0x%02X failed: %s", LC76G_ADDR_R, esp_err_to_name(ret));
+        // ESP_LOGD(TAG, "Phase 4: Read payload from 0x%02X failed: %s", LC76G_ADDR_R, esp_err_to_name(ret));
         xSemaphoreGive(g_i2c_mux);
         return ret;
     }

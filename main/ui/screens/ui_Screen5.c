@@ -77,6 +77,9 @@ void ui_Screen5_screen_init(void) {
     lv_textarea_set_one_line(ui_TextAreaNumpad, true);
     lv_obj_set_style_text_font(ui_TextAreaNumpad, &lv_font_montserrat_22, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_TextAreaNumpad, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(ui_TextAreaNumpad, lv_color_hex(0x1B2A3B), LV_PART_MAIN); // Matches buttons
+    lv_obj_set_style_border_color(ui_TextAreaNumpad, lv_color_hex(0x004488), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui_TextAreaNumpad, 2, LV_PART_MAIN);
 
     if (current_edit_mode == EDIT_MODE_SMS) lv_textarea_set_text(ui_TextAreaNumpad, g_w_sms_numbers);
     else if (current_edit_mode == EDIT_MODE_CALL) lv_textarea_set_text(ui_TextAreaNumpad, g_w_call_numbers);

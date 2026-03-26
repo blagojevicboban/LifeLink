@@ -1,7 +1,7 @@
 CompileFlags:
   CompilationDatabase: "build"
   Add:
-    - -mlongcalls
+    - -mlong-calls
     - -fno-builtin-memcpy
     - -D__GNUC__=14
     - -isystem
@@ -22,3 +22,4 @@ CompileFlags:
     - -fno-tree-switch-conversion
     - -mfix-esp32-erratum-72
     - -mno-longcalls
+    - -mlongcalls

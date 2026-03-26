@@ -45,9 +45,26 @@ extern "C"
     esp_err_t axp_set_charge_current(uint16_t ma);
 
     /**
-     * @brief Check if charging
-     * @return true if charging, false otherwise
+     * @brief Read IRQ Status register
+     * @param reg IRQ status register (0x40 to 0x42)
+     * @param status Pointer to store status bits
+     * @return ESP_OK on success
      */
+    esp_err_t axp_get_irq_status(uint8_t reg, uint8_t *status);
+
+    /**
+     * @brief Clear IRQ Status bits (by writing 1 to them)
+     * @param reg IRQ status register (0x40 to 0x42)
+     * @param status Bits to clear
+     * @return ESP_OK on success
+     */
+    esp_err_t axp_clear_irq_status(uint8_t reg, uint8_t status);
+
+    /**
+     * @brief Power off the device (shutdown)
+     */
+    void axp_power_off(void);
+
     bool axp_is_charging(void);
 
 #ifdef __cplusplus

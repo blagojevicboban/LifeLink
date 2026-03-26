@@ -124,11 +124,42 @@ esp_err_t axp_init(i2c_port_t i2c_num)
         }
         axp_set_charge_current(500);
 
-        ESP_LOGI(TAG, "AXP2101 fully initialized. Boot loop should be GONE.");
+        // --- Enable Button Interrupts manually in 0x44, 0x45 ---
+        // Register 0x45 [bit0] = Short press enable, [bit1] = Long press enable
+        axp_write_byte(0x45, 0x03); 
+
+        // --- Configure POK (Power On Key) behavior in Reg 0x36 ---
+        // Bits [1:0] POKLPRS: 00=1s, 01=2s, 10=2.5s, 11=3s.
+        // Set to 3 seconds as requested. Default is usually shorter.
+        uint8_t pok_cfg;
+        if (axp_read_byte(0x36, &pok_cfg) == ESP_OK) {
+            pok_cfg = (pok_cfg & 0xFC) | 0x03; // Mask bottom 2 bits and set to 11 (3s)
+            axp_write_byte(0x36, pok_cfg);
+        }
+
+        ESP_LOGI(TAG, "AXP2101 fully initialized with 3s Long-Press setting. Boot loop should be GONE.");
         return ESP_OK;
     }
     ESP_LOGE(TAG, "AXP2101 Not Found on I2C!");
     return ESP_FAIL;
+}
+
+esp_err_t axp_get_irq_status(uint8_t reg, uint8_t *status)
+{
+    return axp_read_byte(reg, status);
+}
+
+esp_err_t axp_clear_irq_status(uint8_t reg, uint8_t status)
+{
+    return axp_write_byte(reg, status); // Write 1 to clear
+}
+
+void axp_power_off(void)
+{
+    ESP_LOGE(TAG, "SHUTTING DOWN SYSTEM NOW...");
+    // AXP2101 shutdown: write 0x02 to Reg 0x10 (PWROFF bit)
+    axp_write_byte(0x10, 0x02);
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 int axp_get_batt_vol(void)

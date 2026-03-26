@@ -79,7 +79,7 @@ void ui_Screen6_screen_init(void) {
     lv_obj_set_pos(ui_TextAreaPass, 40, 200);
     lv_textarea_set_text(ui_TextAreaPass, g_wifi_pass);
     lv_textarea_set_one_line(ui_TextAreaPass, true);
-    lv_textarea_set_password_mode(ui_TextAreaPass, true);
+    lv_textarea_set_password_mode(ui_TextAreaPass, false);
     lv_obj_add_event_cb(ui_TextAreaPass, ta_event_cb, LV_EVENT_ALL, NULL);
 
     // Keyboard

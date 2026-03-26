@@ -63,12 +63,14 @@ uint32_t g_sleep_hr_duration_s = 10;  // 10 seconds default
 int g_action_origin = 0; // 0: Watch Only, 1: App + Watch
 
 bool g_is_aod_mode = true;
-static uint64_t g_last_touch_time = 0; // Moved to global for AOD access
+static volatile uint64_t g_last_touch_time = 0; // MICROSECONDS
+static volatile uint64_t last_touch_time = 0;   // MILLISECONDS
 
 lv_obj_t *ui_AODScreen = NULL;
 lv_obj_t *ui_AODTime = NULL;
 
 extern "C" lv_obj_t * ui_Screen1; // Dashboard
+extern "C" lv_obj_t * ui_LabelWiFi_Icon; // Added for status updates
 SemaphoreHandle_t g_i2c_mux = NULL; 
 
 void create_aod_screen() {
@@ -431,8 +433,8 @@ void setup_sensor()
 }
 
 // --- Screen Timeout Variables ---
-static uint64_t last_touch_time = 0;
 static bool screen_is_on = true;
+// volatile last_touch_time moved to global section above
 
 void reset_screen_timer()
 {
@@ -563,7 +565,7 @@ void example_lvgl_rounder_cb(struct _lv_disp_drv_t *disp_drv, lv_area_t *area)
 static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
     uint8_t touched = 0;
-    if (g_i2c_mux && xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(10))) {
+    if (g_i2c_mux && xSemaphoreTake(g_i2c_mux, pdMS_TO_TICKS(100))) {
         touched = touch.getPoint(x, y, 2);
         xSemaphoreGive(g_i2c_mux);
     }
@@ -651,6 +653,7 @@ void load_settings()
     if (err == ESP_OK)
     {
         nvs_get_i32(my_handle, "screen_timeout", (int32_t *)&g_screen_timeout_ms);
+        if (g_screen_timeout_ms < 5000) g_screen_timeout_ms = 15000; // Sanitize: min 5s, default 15s
 
         uint32_t val;
         if (nvs_get_u32(my_handle, "fall_low", &val) == ESP_OK)
@@ -890,6 +893,7 @@ extern "C" void wifi_reconnect_now() {
         wifi_config_t wifi_config = {};
         strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
         strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
+        wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
         
         esp_wifi_disconnect();
         esp_wifi_stop();
@@ -897,7 +901,7 @@ extern "C" void wifi_reconnect_now() {
         esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
         esp_wifi_start();
         esp_wifi_connect();
-        ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting...");
+        ESP_LOGI("WIFI", "WiFi credentials updated and reconnecting to %s...", g_wifi_ssid);
     }
 }
 
@@ -906,12 +910,26 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI("WIFI", "WiFi station started, connecting to %s...", g_wifi_ssid);
         esp_wifi_connect();
+        if (lvgl_mux && example_lvgl_lock(10)) {
+            if (ui_LabelWiFi_Icon) lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0xFFA500), 0); // Orange
+            example_lvgl_unlock();
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         ESP_LOGI("WIFI", "Connected to AP successfully!");
+        if (lvgl_mux && example_lvgl_lock(10)) {
+            if (ui_LabelWiFi_Icon) lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0xFFFF00), 0); // Yellow (Wait for IP)
+            example_lvgl_unlock();
+        }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_connected = false;
         wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
         ESP_LOGW("WIFI", "Disconnected from AP, reason: %d", event->reason);
+        
+        if (lvgl_mux && example_lvgl_lock(10)) {
+            if (ui_LabelWiFi_Icon) lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0xFF0000), 0); // Red
+            example_lvgl_unlock();
+        }
+
         if (g_wifi_enabled) {
             ESP_LOGI("WIFI", "Attempting reconnection...");
             esp_wifi_connect();
@@ -920,6 +938,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI("WIFI", "Successfully got IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_wifi_connected = true;
+        if (lvgl_mux && example_lvgl_lock(10)) {
+            if (ui_LabelWiFi_Icon) lv_obj_set_style_text_color(ui_LabelWiFi_Icon, lv_color_hex(0x00FF00), 0); // Bright Green
+            example_lvgl_unlock();
+        }
     }
 }
 
@@ -929,39 +951,40 @@ void wifi_init_sta(void) {
         return;
     }
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    esp_netif_create_default_wifi_sta();
+    if (!s_wifi_init_done) {
+        ESP_ERROR_CHECK(esp_netif_init());
+        esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+        esp_netif_set_hostname(sta_netif, "LifeLink-Watch");
 
-    ESP_LOGI("WIFI", "Free Heap before wifi_init: %lu, Internal: %lu, PSRAM: %lu", 
-             (unsigned long)esp_get_free_heap_size(), 
-             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+        cfg.static_rx_buf_num = 4;
+        cfg.dynamic_rx_buf_num = 16;
+        ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    // Memory optimization: Reduce internal RAM footprint
-    cfg.static_rx_buf_num = 4;
-    cfg.dynamic_rx_buf_num = 16;
-    
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                        ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_any_id));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
-                                                        IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler,
-                                                        NULL,
-                                                        &instance_got_ip));
+        esp_event_handler_instance_t instance_any_id;
+        esp_event_handler_instance_t instance_got_ip;
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                            ESP_EVENT_ANY_ID,
+                                                            &wifi_event_handler,
+                                                            NULL,
+                                                            &instance_any_id));
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                            IP_EVENT_STA_GOT_IP,
+                                                            &wifi_event_handler,
+                                                            NULL,
+                                                            &instance_got_ip));
+        s_wifi_init_done = true;
+    }
 
     wifi_config_t wifi_config = {};
     strncpy((char*)wifi_config.sta.ssid, g_wifi_ssid, sizeof(wifi_config.sta.ssid));
     strncpy((char*)wifi_config.sta.password, g_wifi_pass, sizeof(wifi_config.sta.password));
-    wifi_config.sta.threshold.rssi = -127;
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    
+    // WPA3 Support (SAE) if available in this IDF version
+    #if CONFIG_ESP_WIFI_PW_ID
+    wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    #endif
 
     ESP_LOGI("WIFI", "Initializing WiFi STA with SSID: %s", g_wifi_ssid);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
@@ -969,7 +992,6 @@ void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI("WIFI", "wifi_init_sta sequence completed.");
-    s_wifi_init_done = true;
 }
 
 esp_err_t send_to_api(const char* post_data) {
@@ -1030,7 +1052,11 @@ extern "C" void toggle_wifi(bool enable) {
     g_wifi_enabled = enable;
     if (enable) {
         ESP_LOGI("WIFI", "WiFi Enabled via UI (SSID: %s)", g_wifi_ssid);
-        if (!s_wifi_connected) esp_wifi_connect();
+        if (!s_wifi_init_done) {
+            wifi_init_sta();
+        } else if (!s_wifi_connected) {
+            esp_wifi_connect();
+        }
     } else {
         ESP_LOGI("WIFI", "WiFi Disabled via UI");
         esp_wifi_disconnect();
@@ -1363,6 +1389,7 @@ void read_sensor_data(void *arg)
     int samplesCollected = 0;
     static bool s_max30102_sensing = false;
     uint64_t last_batt_check = 0;
+    uint64_t last_button_check = 0;
     uint64_t last_sensor_log = 0;
     uint64_t last_ui_report = 0;
     static int skipCount = 0;
@@ -1473,6 +1500,28 @@ void read_sensor_data(void *arg)
             }
         }
 
+        // Button Polling
+        if (now_ms_abs - last_button_check > 200) {
+            last_button_check = now_ms_abs;
+            uint8_t irq_status;
+            if (axp_get_irq_status(0x41, &irq_status) == ESP_OK && irq_status != 0) {
+                if (irq_status & 0x01) { // Short press
+                    ESP_LOGI("PMU", "Short press detected - Toggle Screen");
+                    if (screen_is_on) {
+                         // Force sleep by setting an old touch time
+                         last_touch_time = now_ms_abs - (g_screen_timeout_ms + 1000);
+                    } else {
+                         reset_screen_timer(); // This will set screen_is_on = true and reset timers
+                    }
+                }
+                if (irq_status & 0x02) { // Long press
+                    ESP_LOGI("PMU", "Long press detected - SHUTTING DOWN...");
+                    axp_power_off();
+                }
+                axp_clear_irq_status(0x41, irq_status); // Clear those bits
+            }
+        }
+
         // 4. UI & Fall Logic
         if (example_lvgl_lock(-1))
         {
@@ -1565,7 +1614,8 @@ void read_sensor_data(void *arg)
                     break;
             }
 
-            if (screen_is_on && (now_ms_abs - last_touch_time > (uint64_t)SCREEN_TIMEOUT_MS))
+            uint64_t current_now_ms = esp_timer_get_time() / 1000;
+            if (screen_is_on && (current_now_ms - last_touch_time > (uint64_t)g_screen_timeout_ms))
             {
                 screen_is_on = false;
                 if (g_is_aod_mode) {
@@ -1624,13 +1674,9 @@ void gps_task(void *arg)
     lc76g_init(I2C_NUM_0); 
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    uint8_t *buffer = (uint8_t *)heap_caps_malloc(10240, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); 
+    uint8_t *buffer = (uint8_t *)heap_caps_malloc(10240, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); 
     if (!buffer) {
-        // Fallback to internal RAM if PSRAM not available
-        buffer = (uint8_t *)malloc(10240);
-    }
-    if (!buffer) {
-        ESP_LOGE("GPS", "Failed to allocate memory for GPS buffer!");
+        ESP_LOGE("GPS", "Failed to allocate memory for GPS buffer in internal RAM!");
         vTaskDelete(NULL);
     }
     size_t read_len = 0;
@@ -1696,7 +1742,7 @@ void gps_task(void *arg)
             static uint32_t last_gps_err = 0;
             if (esp_timer_get_time() / 1000 - last_gps_err > 5000)
             {
-                ESP_LOGW("GPS", "I2C Comm Fail or Timeout: %s", esp_err_to_name(ret));
+                ESP_LOGD("GPS", "I2C Comm Fail or Timeout: %s", esp_err_to_name(ret));
                 last_gps_err = esp_timer_get_time() / 1000;
             }
         }

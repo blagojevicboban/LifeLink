@@ -21,6 +21,7 @@ extern lv_obj_t *ui_LabelGPS;
 extern lv_obj_t *ui_LabelGPS_Icon; // GPS Icon
 extern lv_obj_t *ui_LabelGSM_Icon;
 extern lv_obj_t *ui_LabelGSM_Text;
+extern lv_obj_t *ui_LabelWiFi_Icon; // WiFi Icon
 extern lv_obj_t *ui_LabelBLT;
 extern lv_obj_t *ui_LabelBLE_Icon; // BLE Icon
 extern lv_obj_t *ui_LabelBatt; // Battery Percentage Text
